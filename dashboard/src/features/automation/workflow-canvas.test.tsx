@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { expect, it, vi } from "vitest"
 
-import { CAROUSEL_WORKFLOW } from "./workflow-fixtures"
+import { CAROUSEL_WORKFLOW, NEWSLETTER_WORKFLOW } from "./workflow-fixtures"
 import { WorkflowCanvas } from "./workflow-canvas"
 import type { ExecutionStatus, NodeId } from "./types"
 
@@ -29,4 +29,21 @@ it("selects nodes and exposes zoom controls", async () => {
   expect(screen.getByText("110%")).toBeVisible()
   await user.click(screen.getByRole("button", { name: /reset zoom/i }))
   expect(screen.getByText("100%")).toBeVisible()
+})
+
+it.each([
+  [CAROUSEL_WORKFLOW, "6 nodes · 5 connections"],
+  [NEWSLETTER_WORKFLOW, "5 nodes · 4 connections"],
+])("shows the workflow's node and connection count", (workflow, summary) => {
+  render(
+    <WorkflowCanvas
+      workflow={workflow}
+      statuses={idleStatuses}
+      activeConnectionId={null}
+      selectedNodeId="source"
+      onSelectNode={vi.fn()}
+    />
+  )
+
+  expect(screen.getByText(summary)).toBeVisible()
 })

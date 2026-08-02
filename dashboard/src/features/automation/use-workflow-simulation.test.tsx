@@ -7,19 +7,32 @@ import { RUN_STEP_MS, useWorkflowSimulation } from "./use-workflow-simulation"
 afterEach(() => vi.useRealTimers())
 
 describe("useWorkflowSimulation", () => {
-  it("runs nodes in order and completes cleanly", async () => {
+  it("runs automatic nodes but leaves the manual publisher idle", async () => {
     vi.useFakeTimers()
     const { result } = renderHook(() =>
       useWorkflowSimulation(CAROUSEL_WORKFLOW.nodes, CAROUSEL_WORKFLOW.connections)
     )
 
     act(() => void result.current.run())
-    expect(result.current.statuses.source).toBe("running")
+    await act(async () => vi.runAllTimersAsync())
 
+    expect(result.current.statuses.publisher).toBe("idle")
+    expect(result.current.statuses.review).toBe("completed")
+    expect(result.current.activeConnectionId).toBeNull()
+    expect(result.current.isRunning).toBe(false)
+  })
+
+  it("does not animate the connection to the manual publisher", async () => {
+    vi.useFakeTimers()
+    const { result } = renderHook(() =>
+      useWorkflowSimulation(CAROUSEL_WORKFLOW.nodes, CAROUSEL_WORKFLOW.connections)
+    )
+
+    act(() => void result.current.run())
     await act(async () => vi.advanceTimersByTimeAsync(RUN_STEP_MS * 5))
-    expect(
-      Object.values(result.current.statuses).every((status) => status === "completed")
-    ).toBe(true)
+
+    expect(result.current.statuses.review).toBe("completed")
+    expect(result.current.activeConnectionId).toBeNull()
     expect(result.current.isRunning).toBe(false)
   })
 })

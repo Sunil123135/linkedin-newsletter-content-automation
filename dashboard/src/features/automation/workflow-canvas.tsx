@@ -36,7 +36,9 @@ export function WorkflowCanvas({
           </span>
           <div>
             <p className="text-sm font-semibold">Workflow canvas</p>
-            <p className="text-xs text-muted-foreground">5 nodes · 4 connections</p>
+            <p className="text-xs text-muted-foreground">
+              {workflow.nodes.length} nodes · {workflow.connections.length} connections
+            </p>
           </div>
           <Badge variant="outline" className="ml-1 hidden text-[10px] sm:inline-flex">
             UI simulation

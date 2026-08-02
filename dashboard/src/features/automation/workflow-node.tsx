@@ -47,8 +47,9 @@ export function WorkflowNode({
   return (
     <button
       type="button"
-      aria-label={node.label}
+      aria-label={`${node.label} node`}
       aria-pressed={selected}
+      data-execution-mode={node.executionMode}
       onClick={onSelect}
       className={cn(
         "group absolute z-10 w-52 rounded-xl border bg-card text-left text-card-foreground shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
@@ -74,8 +75,15 @@ export function WorkflowNode({
           <Icon className="size-4" />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block text-[10px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">
-            {node.provider}
+          <span className="flex items-center gap-1.5">
+            <span className="text-[10px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">
+              {node.provider}
+            </span>
+            {node.executionMode === "manual" ? (
+              <Badge variant="outline" className="h-4 px-1 text-[8px] font-medium normal-case">
+                Manual
+              </Badge>
+            ) : null}
           </span>
           <span className="mt-0.5 block text-sm font-semibold leading-tight">
             {node.label}
