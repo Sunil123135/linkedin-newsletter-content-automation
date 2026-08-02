@@ -1,9 +1,17 @@
 export type WorkflowKind = "carousel" | "newsletter"
-export type NodeId = "source" | "research" | "writer" | "visual" | "review"
+export type NodeId =
+  | "source"
+  | "research"
+  | "writer"
+  | "visual"
+  | "review"
+  | "publisher"
+export type NodeExecutionMode = "automatic" | "manual"
 export type ExecutionStatus = "idle" | "queued" | "running" | "completed" | "error"
 
 export interface WorkflowNodeDefinition {
   id: NodeId
+  executionMode: NodeExecutionMode
   label: string
   provider: string
   description: string
@@ -11,7 +19,7 @@ export interface WorkflowNodeDefinition {
   output: string
   result: string
   position: { x: number; y: number }
-  icon: "search" | "brain" | "write" | "image" | "review"
+  icon: "search" | "brain" | "write" | "image" | "review" | "publish"
 }
 
 export interface WorkflowConnection {

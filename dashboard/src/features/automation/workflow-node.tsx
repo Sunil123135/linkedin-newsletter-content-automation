@@ -6,6 +6,7 @@ import {
   PenLineIcon,
   ScanEyeIcon,
   SearchIcon,
+  SendIcon,
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
@@ -19,6 +20,7 @@ const icons = {
   write: PenLineIcon,
   image: ImageIcon,
   review: ScanEyeIcon,
+  publish: SendIcon,
 }
 
 const statusLabels: Record<ExecutionStatus, string> = {
