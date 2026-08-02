@@ -53,13 +53,17 @@ export class FileSystemCarouselArtifactStore implements CarouselArtifactStore {
     const runDirectory = this.resolveContainedPath(runId)
     const manifest = await this.loadManifest(path.join(runDirectory, "manifest.json"))
 
+    if (manifest.id !== runId) {
+      throw new ArtifactValidationError("INVALID_MANIFEST", "The carousel manifest ID does not match the requested run")
+    }
+
     if (manifest.revision !== revision) {
       throw new ArtifactValidationError("STALE_REVISION", `Run ${runId} does not have revision ${revision}`)
     }
 
     const slides = await Promise.all(manifest.slides.map(async (asset) => ({
       asset,
-      bytes: await this.loadSlide(asset),
+      bytes: await this.loadSlide(asset, runDirectory),
     })))
 
     return { run: manifest, slides }
@@ -95,8 +99,8 @@ export class FileSystemCarouselArtifactStore implements CarouselArtifactStore {
     return result.data
   }
 
-  private async loadSlide(asset: CarouselSlideAsset): Promise<Uint8Array> {
-    const assetPath = this.resolveContainedPath(asset.storageKey)
+  private async loadSlide(asset: CarouselSlideAsset, runDirectory: string): Promise<Uint8Array> {
+    const assetPath = this.resolveContainedPath(asset.storageKey, runDirectory)
     let bytes: Uint8Array
     try {
       bytes = await readFile(assetPath)
@@ -115,10 +119,11 @@ export class FileSystemCarouselArtifactStore implements CarouselArtifactStore {
     return bytes
   }
 
-  private resolveContainedPath(input: string): string {
+  private resolveContainedPath(input: string, containingDirectory = this.resolvedArtifactRoot): string {
     const resolvedPath = path.resolve(this.resolvedArtifactRoot, input)
-    if (!resolvedPath.startsWith(`${this.resolvedArtifactRoot}${path.sep}`)) {
-      throw new ArtifactValidationError("INVALID_ASSET_PATH", "The artifact path must remain within the artifact root")
+    if (!isPathWithin(resolvedPath, this.resolvedArtifactRoot)
+      || !isPathWithin(resolvedPath, containingDirectory)) {
+      throw new ArtifactValidationError("INVALID_ASSET_PATH", "The artifact path must remain within the requested run directory")
     }
 
     return resolvedPath
@@ -131,4 +136,8 @@ function isMissingFile(error: unknown): error is NodeJS.ErrnoException {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
+}
+
+function isPathWithin(resolvedPath: string, resolvedDirectory: string): boolean {
+  return resolvedPath.startsWith(`${resolvedDirectory}${path.sep}`)
 }

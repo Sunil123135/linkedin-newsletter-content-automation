@@ -49,6 +49,16 @@ describe("FileSystemCarouselArtifactStore", () => {
       .rejects.toMatchObject({ code: "NOT_APPROVED" })
   })
 
+  it("rejects a manifest whose declared ID differs from the requested run", async () => {
+    const fixture = await createApprovedRunFixture({ manifestId: "other-run" })
+
+    await expectArtifactValidationError(
+      new FileSystemCarouselArtifactStore(fixture.artifactRoot)
+        .loadApprovedRun(fixture.requestedRunId, fixture.run.revision),
+      "INVALID_MANIFEST",
+    )
+  })
+
   it("rejects a storage key that escapes the artifact root", async () => {
     const fixture = await createApprovedRunFixture({ storageKey: "../escape.png" })
     await writeFile(path.join(fixture.temporaryDirectory, "escape.png"), fixture.slideBytes[0])
@@ -56,6 +66,16 @@ describe("FileSystemCarouselArtifactStore", () => {
     await expect(new FileSystemCarouselArtifactStore(fixture.artifactRoot)
       .loadApprovedRun(fixture.run.id, fixture.run.revision))
       .rejects.toMatchObject({ code: "INVALID_ASSET_PATH" })
+  })
+
+  it("rejects a storage key inside the artifact root but outside the requested run", async () => {
+    const fixture = await createApprovedRunFixture({ storageKeyRoot: "other-run" })
+
+    await expectArtifactValidationError(
+      new FileSystemCarouselArtifactStore(fixture.artifactRoot)
+        .loadApprovedRun(fixture.requestedRunId, fixture.run.revision),
+      "INVALID_ASSET_PATH",
+    )
   })
 
   it("rejects a checksum mismatch", async () => {
@@ -77,9 +97,22 @@ describe("FileSystemCarouselArtifactStore", () => {
 })
 
 interface FixtureOverrides {
+  manifestId?: string
   status?: string
   storageKey?: string
+  storageKeyRoot?: string
   checksum?: string
+}
+
+async function expectArtifactValidationError(promise: Promise<unknown>, code: string) {
+  try {
+    await promise
+  } catch (error) {
+    expect(error).toMatchObject({ code })
+    return
+  }
+
+  throw new Error(`Expected artifact validation error ${code}`)
 }
 
 async function createApprovedRunFixture(overrides: FixtureOverrides = {}) {
@@ -87,14 +120,15 @@ async function createApprovedRunFixture(overrides: FixtureOverrides = {}) {
   temporaryDirectories.push(temporaryDirectory)
 
   const artifactRoot = path.join(temporaryDirectory, "artifacts")
+  const requestedRunId = "run-123"
   const run = {
-    id: "run-123",
+    id: overrides.manifestId ?? requestedRunId,
     revision: 3,
     status: overrides.status ?? "approved",
     caption: "A practical lesson from the field.",
     documentTitle: "Reliable carousels",
     slides: await Promise.all([1, 2, 3, 4, 5].map(async (index) => {
-      const storageKey = overrides.storageKey ?? `run-123/slides/0${index}.png`
+      const storageKey = overrides.storageKey ?? `${overrides.storageKeyRoot ?? requestedRunId}/slides/0${index}.png`
       const bytes = create1080SquarePng(index)
       const checksum = overrides.checksum ?? createHash("sha256").update(bytes).digest("hex")
       await mkdir(path.dirname(path.join(artifactRoot, storageKey)), { recursive: true })
@@ -112,11 +146,12 @@ async function createApprovedRunFixture(overrides: FixtureOverrides = {}) {
       }
     })),
   }
-  await mkdir(path.join(artifactRoot, run.id), { recursive: true })
-  await writeFile(path.join(artifactRoot, run.id, "manifest.json"), JSON.stringify(run))
+  await mkdir(path.join(artifactRoot, requestedRunId), { recursive: true })
+  await writeFile(path.join(artifactRoot, requestedRunId, "manifest.json"), JSON.stringify(run))
 
   return {
     artifactRoot,
+    requestedRunId,
     run,
     slideBytes: run.slides.map((slide) => create1080SquarePng(slide.index)),
     temporaryDirectory,
