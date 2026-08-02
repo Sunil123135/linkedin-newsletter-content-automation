@@ -1,4 +1,5 @@
 import { PDFDocument } from "pdf-lib"
+import sharp from "sharp"
 import type { LoadedCarouselSlide } from "../carousel-artifacts/artifact-store"
 
 const PAGE_SIZE = 1080
@@ -57,6 +58,11 @@ async function embedSlide(document: PDFDocument, slide: LoadedCarouselSlide) {
   }
 
   const imageBytes = new Uint8Array(slide.bytes)
+  await sharp(Buffer.from(imageBytes), {
+    failOn: "error",
+    limitInputPixels: PAGE_SIZE * PAGE_SIZE,
+  }).raw().toBuffer()
+
   return actualMimeType === "image/png"
     ? document.embedPng(imageBytes)
     : document.embedJpg(imageBytes)

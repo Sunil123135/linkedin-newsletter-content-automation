@@ -1,12 +1,12 @@
 import { deflateSync } from "node:zlib"
-import { PDFDocument } from "pdf-lib"
+import { decodePDFRawStream, PDFArray, PDFDict, PDFDocument, PDFName, PDFRawStream } from "pdf-lib"
 import { describe, expect, it } from "vitest"
 import type { LoadedCarouselSlide } from "../carousel-artifacts/artifact-store"
 import { buildCarouselPdf } from "./pdf-builder"
 
 describe("buildCarouselPdf", () => {
   it("creates a PDF with exactly five square pages in manifest order", async () => {
-    const pdf = await buildCarouselPdf(createSlides())
+    const pdf = await buildCarouselPdf(createDistinctPngSlides())
     const parsed = await PDFDocument.load(pdf)
 
     expect(parsed.getPageCount()).toBe(5)
@@ -16,6 +16,13 @@ describe("buildCarouselPdf", () => {
       { width: 1080, height: 1080 },
       { width: 1080, height: 1080 },
       { width: 1080, height: 1080 },
+    ])
+    expect(parsed.getPages().map(getPageImageDetails)).toEqual([
+      { color: [1, 1, 1], fullPage: true },
+      { color: [2, 2, 2], fullPage: true },
+      { color: [3, 3, 3], fullPage: true },
+      { color: [4, 4, 4], fullPage: true },
+      { color: [5, 5, 5], fullPage: true },
     ])
   })
 
@@ -49,6 +56,13 @@ describe("buildCarouselPdf", () => {
     await expect(buildCarouselPdf(slides)).rejects.toThrow(/1080 by 1080/)
   })
 
+  it("rejects a JPEG with a 1080 by 1080 header whose pixel data is truncated", async () => {
+    const slides = createSlides()
+    slides[1] = { ...slides[1], bytes: createJpeg(1080, 1080).subarray(0, -2) }
+
+    await expectRejection(buildCarouselPdf(slides))
+  })
+
   it("rejects a generated PDF larger than LinkedIn's 100 MB document limit", async () => {
     const slides = [1, 2, 3, 4, 5].map((index) => createSlide(index, createJpeg(1080, 1080, 21 * 1024 * 1024)))
 
@@ -61,6 +75,30 @@ function createSlides(indexes = [1, 2, 3, 4, 5]): LoadedCarouselSlide[] {
     index,
     index % 2 === 0 ? createJpeg(1080, 1080) : createPng(1080, 1080, index),
   ))
+}
+
+function createDistinctPngSlides(): LoadedCarouselSlide[] {
+  return [1, 2, 3, 4, 5].map((index) => createSlide(index, createPng(1080, 1080, index)))
+}
+
+function getPageImageDetails(page: ReturnType<PDFDocument["getPages"]>[number]) {
+  const resources = page.node.Resources()
+  const xObjects = resources?.lookup(PDFName.XObject, PDFDict)
+  if (!xObjects || xObjects.keys().length !== 1) throw new Error("Expected exactly one page image")
+
+  const imageName = xObjects.keys()[0]
+  const image = page.doc.context.lookup(xObjects.get(imageName)) as PDFRawStream
+  const pixels = decodePDFRawStream(image).decode()
+  const contents = page.node.Contents()
+  const content = (contents instanceof PDFArray ? contents.lookup(0) : contents) as PDFRawStream | undefined
+  if (!content) throw new Error("Expected page content stream")
+
+  const drawingOperators = new TextDecoder().decode(decodePDFRawStream(content).decode())
+
+  return {
+    color: Array.from(pixels.subarray(0, 3)),
+    fullPage: drawingOperators.includes("1080 0 0 1080 0 0 cm"),
+  }
 }
 
 async function expectRejection(promise: Promise<unknown>): Promise<void> {
