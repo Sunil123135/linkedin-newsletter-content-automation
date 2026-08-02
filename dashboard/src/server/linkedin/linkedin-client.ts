@@ -142,7 +142,12 @@ export class LinkedInClient {
       throw new LinkedInError("INSUFFICIENT_SCOPE", "LinkedIn access is missing the required publishing scope.")
     }
     if (response.status === 429) {
-      throw new LinkedInError("RATE_LIMITED", "LinkedIn is rate limiting requests. Please retry later.")
+      throw new LinkedInError(
+        "RATE_LIMITED",
+        "LinkedIn is rate limiting requests. Please retry later.",
+        undefined,
+        { retryAfterSeconds: parseRetryAfterSeconds(response.headers.get("Retry-After")) },
+      )
     }
     if (response.status >= 500 && response.status <= 599) {
       throw unavailableFailure()
@@ -174,4 +179,13 @@ function unavailableFailure(cause?: unknown): LinkedInError {
     "LinkedIn is temporarily unavailable. Please try again later.",
     cause,
   )
+}
+
+function parseRetryAfterSeconds(retryAfter: string | null): number | undefined {
+  if (retryAfter === null || !/^\d+$/.test(retryAfter)) {
+    return undefined
+  }
+
+  const seconds = Number(retryAfter)
+  return Number.isSafeInteger(seconds) ? seconds : undefined
 }

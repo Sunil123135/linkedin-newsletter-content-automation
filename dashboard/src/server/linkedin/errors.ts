@@ -11,10 +11,19 @@ export type LinkedInErrorCode =
 
 export class LinkedInError extends Error {
   readonly code: LinkedInErrorCode
+  readonly retryAfterSeconds?: number
 
-  constructor(code: LinkedInErrorCode, publicMessage: string, cause?: unknown) {
+  constructor(
+    code: LinkedInErrorCode,
+    publicMessage: string,
+    cause?: unknown,
+    metadata?: { retryAfterSeconds?: number },
+  ) {
     super(publicMessage, { cause })
     this.name = "LinkedInError"
     this.code = code
+    if (metadata?.retryAfterSeconds !== undefined) {
+      this.retryAfterSeconds = metadata.retryAfterSeconds
+    }
   }
 }

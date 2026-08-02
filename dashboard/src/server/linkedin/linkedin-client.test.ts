@@ -148,12 +148,36 @@ describe("LinkedInClient", () => {
       headers: { "Retry-After": "60" },
     })))
 
-    await expect(client.createDocumentPost({
+    const error = await rejectedLinkedInError(client.createDocumentPost({
       author,
       commentary: "Commentary",
       documentUrn,
       documentTitle: "Title",
-    })).rejects.toMatchObject({ code: "RATE_LIMITED" } satisfies Partial<LinkedInError>)
+    }))
+
+    expect(error).toMatchObject({
+      code: "RATE_LIMITED",
+      retryAfterSeconds: 60,
+    } satisfies Partial<LinkedInError>)
+  })
+
+  it("does not expose missing or invalid Retry-After values", async () => {
+    for (const retryAfter of [null, "sixty", "1.5", "-1", "9007199254740992"]) {
+      const client = createClient(fetchFixture(new Response(null, {
+        status: 429,
+        headers: retryAfter === null ? undefined : { "Retry-After": retryAfter },
+      })))
+
+      const error = await rejectedLinkedInError(client.createDocumentPost({
+        author,
+        commentary: "Commentary",
+        documentUrn,
+        documentTitle: "Title",
+      }))
+
+      expect(error).toMatchObject({ code: "RATE_LIMITED" } satisfies Partial<LinkedInError>)
+      expect(error).not.toHaveProperty("retryAfterSeconds")
+    }
   })
 
   it("maps LinkedIn 5xx to LINKEDIN_UNAVAILABLE", async () => {
@@ -233,4 +257,15 @@ function restJsonHeaders() {
     "X-Restli-Protocol-Version": "2.0.0",
     "Content-Type": "application/json",
   }
+}
+
+async function rejectedLinkedInError(promise: Promise<unknown>): Promise<LinkedInError> {
+  try {
+    await promise
+  } catch (error) {
+    expect(error).toBeInstanceOf(LinkedInError)
+    return error as LinkedInError
+  }
+
+  throw new Error("Expected LinkedInError rejection")
 }
