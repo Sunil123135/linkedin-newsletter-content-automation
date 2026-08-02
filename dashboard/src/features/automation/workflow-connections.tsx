@@ -11,7 +11,7 @@ export function WorkflowConnections({
     <svg
       aria-hidden="true"
       className="pointer-events-none absolute inset-0 size-full overflow-visible"
-      viewBox="0 0 1200 500"
+      viewBox="0 0 1000 500"
       preserveAspectRatio="none"
     >
       <defs>

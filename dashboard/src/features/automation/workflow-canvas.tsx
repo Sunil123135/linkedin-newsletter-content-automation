@@ -86,7 +86,7 @@ export function WorkflowCanvas({
         }}
       >
         <div
-          className="relative h-[500px] min-w-[1200px] transition-transform duration-200 ease-out"
+          className="relative h-[500px] min-w-[1000px] transition-transform duration-200 ease-out"
           style={{ transform: `scale(${zoom})`, transformOrigin: "top left" }}
         >
           <WorkflowConnections

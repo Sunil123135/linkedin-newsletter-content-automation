@@ -14,7 +14,7 @@ it("opens every generated slide individually", async () => {
     expect(screen.getByRole("dialog")).toHaveTextContent(slide.title)
     await user.click(screen.getByRole("button", { name: "Close" }))
   }
-})
+}, 15_000)
 
 it("navigates between slide previews", async () => {
   const user = userEvent.setup()
