@@ -11,7 +11,7 @@ import {
   LINKEDIN_TOKEN_ENDPOINT,
 } from "@/server/linkedin/oauth"
 
-const issuer = "https://www.linkedin.com/oauth"
+const issuer = "https://www.linkedin.com"
 const jwksUri = "https://www.linkedin.com/oauth/openid/jwks"
 let signingKey: CryptoKey
 let publicJwk: JWK

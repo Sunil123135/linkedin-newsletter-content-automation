@@ -15,10 +15,13 @@ import { LinkedInError } from "./errors"
 export const LINKEDIN_AUTHORIZATION_ENDPOINT = "https://www.linkedin.com/oauth/v2/authorization"
 export const LINKEDIN_TOKEN_ENDPOINT = "https://www.linkedin.com/oauth/v2/accessToken"
 export const LINKEDIN_DISCOVERY_ENDPOINT = "https://www.linkedin.com/oauth/.well-known/openid-configuration"
-export const LINKEDIN_OIDC_ISSUER = "https://www.linkedin.com/oauth"
+export const LINKEDIN_OIDC_ISSUER = "https://www.linkedin.com"
+export const LINKEDIN_JWKS_ENDPOINT = "https://www.linkedin.com/oauth/openid/jwks"
 export const LINKEDIN_SCOPES = "openid profile w_member_social"
 export const LINKEDIN_OAUTH_STATE_COOKIE = "linkedin_oauth_state"
 export const OAUTH_STATE_LIFETIME_MS = 10 * 60 * 1000
+export const OIDC_MAX_TOKEN_AGE_SECONDS = OAUTH_STATE_LIFETIME_MS / 1000
+export const OIDC_CLOCK_TOLERANCE_SECONDS = 60
 
 type FetchImplementation = (
   input: string | URL | Request,
@@ -53,7 +56,7 @@ const tokenResponseSchema = z.object({
 
 const discoverySchema = z.object({
   issuer: z.literal(LINKEDIN_OIDC_ISSUER),
-  jwks_uri: z.url(),
+  jwks_uri: z.literal(LINKEDIN_JWKS_ENDPOINT),
 })
 
 export function buildLinkedInAuthorizationUrl(
@@ -164,9 +167,10 @@ export async function verifyLinkedInIdToken(
   idToken: string,
   config: LinkedInConfig,
   fetchImplementation: FetchImplementation = fetch,
+  currentDate: Date = new Date(),
 ): Promise<VerifiedLinkedInIdentity> {
   const metadata = await loadDiscoveryMetadata(fetchImplementation)
-  const jwks = createRemoteJWKSet(new URL(metadata.jwks_uri), {
+  const jwks = createRemoteJWKSet(new URL(LINKEDIN_JWKS_ENDPOINT), {
     [customFetch]: (url, options) => fetchImplementation(url, options),
   })
   const { payload } = await jwtVerify(idToken, jwks, {
@@ -174,6 +178,9 @@ export async function verifyLinkedInIdToken(
     audience: config.clientId,
     algorithms: ["RS256"],
     requiredClaims: ["exp", "iat", "sub"],
+    maxTokenAge: OIDC_MAX_TOKEN_AGE_SECONDS,
+    clockTolerance: OIDC_CLOCK_TOLERANCE_SECONDS,
+    currentDate,
   })
 
   if (typeof payload.sub !== "string" || payload.sub.length === 0 || typeof payload.name !== "string") {

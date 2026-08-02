@@ -27,7 +27,7 @@ const config: LinkedInConfig = {
   apiVersion: "202603",
 }
 
-const issuer = "https://www.linkedin.com/oauth"
+const issuer = "https://www.linkedin.com"
 const jwksUri = "https://www.linkedin.com/oauth/openid/jwks"
 let signingKey: CryptoKey
 let publicJwk: JWK
@@ -176,12 +176,72 @@ describe("LinkedIn OIDC identity", () => {
 
     await expect(verifyLinkedInIdToken(await signIdToken(), config, fetchFixture)).rejects.toThrow()
   })
+
+  it("rejects the legacy LinkedIn issuer ending in /oauth", async () => {
+    const legacyIssuer = "https://www.linkedin.com/oauth"
+    const fetchFixture = createOidcFetchFixture({ discoveredIssuer: legacyIssuer })
+
+    await expect(verifyLinkedInIdToken(
+      await signIdToken({ issuer: legacyIssuer }),
+      config,
+      fetchFixture,
+    )).rejects.toThrow()
+  })
+
+  it("rejects discovery metadata that redirects trust to a foreign JWKS", async () => {
+    const foreignJwksUri = "https://attacker.example/jwks"
+    const foreignKeys = await generateKeyPair("RS256", { extractable: true })
+    const foreignJwk: JWK = {
+      ...await exportJWK(foreignKeys.publicKey),
+      alg: "RS256",
+      kid: "fixture-key",
+      use: "sig",
+    }
+    const requestedUrls: string[] = []
+    const fetchFixture = createOidcFetchFixture({
+      discoveredJwksUri: foreignJwksUri,
+      jwk: foreignJwk,
+      requestedUrls,
+    })
+
+    await expect(verifyLinkedInIdToken(
+      await signIdToken({ privateKey: foreignKeys.privateKey }),
+      config,
+      fetchFixture,
+    )).rejects.toThrow()
+    expect(requestedUrls).not.toContain(foreignJwksUri)
+  })
+
+  it("rejects an ID token issued beyond the allowed future clock skew", async () => {
+    const currentDate = new Date("2030-01-01T00:00:00.000Z")
+    const now = Math.floor(currentDate.getTime() / 1000)
+
+    await expect(verifyLinkedInIdToken(
+      await signIdToken({ issuedAt: now + 61, expirationTime: now + 300 }),
+      config,
+      createOidcFetchFixture(),
+      currentDate,
+    )).rejects.toThrow()
+  })
+
+  it("rejects an ID token older than the immediate exchange window", async () => {
+    const currentDate = new Date("2030-01-01T00:00:00.000Z")
+    const now = Math.floor(currentDate.getTime() / 1000)
+
+    await expect(verifyLinkedInIdToken(
+      await signIdToken({ issuedAt: now - 661, expirationTime: now + 300 }),
+      config,
+      createOidcFetchFixture(),
+      currentDate,
+    )).rejects.toThrow()
+  })
 })
 
 interface SignOverrides {
   issuer?: string
   audience?: string
   expirationTime?: number | null
+  issuedAt?: number
   privateKey?: CryptoKey
 }
 
@@ -193,7 +253,7 @@ async function signIdToken(overrides: SignOverrides = {}) {
     sub: "member-123",
     iss: overrides.issuer ?? issuer,
     aud: overrides.audience ?? config.clientId,
-    iat: Math.floor(Date.now() / 1000),
+    iat: overrides.issuedAt ?? Math.floor(Date.now() / 1000),
   }
   if (overrides.expirationTime !== null) {
     payload.exp = overrides.expirationTime ?? Math.floor(Date.now() / 1000) + 300
@@ -208,22 +268,30 @@ async function signIdToken(overrides: SignOverrides = {}) {
   return `${signingInput}.${signature.toString("base64url")}`
 }
 
-function createOidcFetchFixture(options: { discoveredIssuer?: string } = {}) {
+interface OidcFetchFixtureOptions {
+  discoveredIssuer?: string
+  discoveredJwksUri?: string
+  jwk?: JWK
+  requestedUrls?: string[]
+}
+
+function createOidcFetchFixture(options: OidcFetchFixtureOptions = {}) {
   return async (input: string | URL | Request) => {
     const url = input.toString()
+    options.requestedUrls?.push(url)
     if (url === LINKEDIN_DISCOVERY_ENDPOINT) {
       return Response.json({
         issuer: options.discoveredIssuer ?? issuer,
         authorization_endpoint: LINKEDIN_AUTHORIZATION_ENDPOINT,
         token_endpoint: LINKEDIN_TOKEN_ENDPOINT,
-        jwks_uri: jwksUri,
+        jwks_uri: options.discoveredJwksUri ?? jwksUri,
         response_types_supported: ["code"],
         subject_types_supported: ["public"],
         id_token_signing_alg_values_supported: ["RS256"],
       })
     }
-    if (url === jwksUri) {
-      return Response.json({ keys: [publicJwk] })
+    if (url === (options.discoveredJwksUri ?? jwksUri)) {
+      return Response.json({ keys: [options.jwk ?? publicJwk] })
     }
     throw new Error(`Unexpected network request: ${url}`)
   }
