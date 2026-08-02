@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 
 import type {
   ExecutionStatus,
@@ -29,21 +29,10 @@ export function useWorkflowSimulation(
   isRunning: boolean
   run: () => Promise<void>
 } {
-  const initialStatuses = useMemo(
-    () => buildStatuses(nodes, () => "idle"),
-    [nodes]
-  )
-  const [statuses, setStatuses] = useState(initialStatuses)
+  const [statuses, setStatuses] = useState(() => buildStatuses(nodes, () => "idle"))
   const [activeConnectionId, setActiveConnectionId] = useState<string | null>(null)
   const [isRunning, setIsRunning] = useState(false)
   const runIdRef = useRef(0)
-
-  useEffect(() => {
-    runIdRef.current += 1
-    setStatuses(initialStatuses)
-    setActiveConnectionId(null)
-    setIsRunning(false)
-  }, [initialStatuses])
 
   useEffect(
     () => () => {
