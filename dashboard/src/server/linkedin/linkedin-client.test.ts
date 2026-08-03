@@ -192,7 +192,7 @@ describe("LinkedInClient", () => {
     const client = createClient(fetchFixture(jsonResponse({ value: { document: documentUrn } })))
 
     await expect(client.initializeDocumentUpload({ owner: author })).rejects.toMatchObject({
-      code: "LINKEDIN_UNAVAILABLE",
+      code: "INVALID_UPSTREAM_RESPONSE",
     } satisfies Partial<LinkedInError>)
   })
 
@@ -204,7 +204,7 @@ describe("LinkedInClient", () => {
       commentary: "Commentary",
       documentUrn,
       documentTitle: "Title",
-    })).rejects.toMatchObject({ code: "LINKEDIN_UNAVAILABLE" } satisfies Partial<LinkedInError>)
+    })).rejects.toMatchObject({ code: "INVALID_UPSTREAM_RESPONSE" } satisfies Partial<LinkedInError>)
   })
 
   it("marks a network failure during post creation as UNKNOWN_OUTCOME", async () => {

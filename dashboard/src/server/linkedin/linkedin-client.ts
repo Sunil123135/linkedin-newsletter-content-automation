@@ -112,7 +112,7 @@ export class LinkedInClient {
 
     const postUrn = response.headers.get("x-restli-id")
     if (!postUrn) {
-      throw unavailableFailure()
+      throw invalidUpstreamFailure()
     }
 
     return { postUrn }
@@ -161,14 +161,14 @@ export class LinkedInClient {
       const payload: unknown = await response.json()
       const parsed = initializedDocumentSchema.safeParse(payload)
       if (!parsed.success) {
-        throw unavailableFailure(parsed.error)
+        throw invalidUpstreamFailure(parsed.error)
       }
       return parsed.data
     } catch (cause) {
       if (cause instanceof LinkedInError) {
         throw cause
       }
-      throw unavailableFailure(cause)
+      throw invalidUpstreamFailure(cause)
     }
   }
 }
@@ -177,6 +177,14 @@ function unavailableFailure(cause?: unknown): LinkedInError {
   return new LinkedInError(
     "LINKEDIN_UNAVAILABLE",
     "LinkedIn is temporarily unavailable. Please try again later.",
+    cause,
+  )
+}
+
+function invalidUpstreamFailure(cause?: unknown): LinkedInError {
+  return new LinkedInError(
+    "INVALID_UPSTREAM_RESPONSE",
+    "LinkedIn returned an invalid response. Please try again later.",
     cause,
   )
 }
