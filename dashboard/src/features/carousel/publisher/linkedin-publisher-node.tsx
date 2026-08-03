@@ -6,6 +6,7 @@ import type { LinkedInPublisherState } from "./linkedin-publisher-state"
 
 export interface LinkedInPublisherNodeProps {
   state: LinkedInPublisherState
+  connected: boolean
   connectionName?: string
   approvedRevision?: number
   postUrl?: string
@@ -13,6 +14,7 @@ export interface LinkedInPublisherNodeProps {
 
 export function LinkedInPublisherNode({
   state,
+  connected,
   connectionName,
   approvedRevision,
   postUrl,
@@ -21,7 +23,7 @@ export function LinkedInPublisherNode({
     <section aria-label="LinkedIn publisher summary" className="space-y-3">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm font-medium">
-          {connectionName ? `Connected as ${connectionName}` : "LinkedIn not connected"}
+          {connected ? `Connected as ${connectionName ?? "LinkedIn member"}` : "LinkedIn not connected"}
         </p>
         <Badge variant="outline" className="capitalize">{state.replaceAll("_", " ")}</Badge>
       </div>

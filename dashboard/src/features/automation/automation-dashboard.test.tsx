@@ -110,6 +110,18 @@ describe("AutomationDashboard", () => {
     )
   })
 
+  it("keeps the Publisher summary and panel connected without a display name", async () => {
+    const user = userEvent.setup()
+    stubLinkedInConnection({ connected: true, reconnectRequired: false })
+    renderDashboard("carousel")
+
+    await user.click(screen.getByRole("button", { name: "LinkedIn Publisher node" }))
+
+    await waitFor(() =>
+      expect(screen.getAllByText("Connected as LinkedIn member")).toHaveLength(2)
+    )
+  })
+
   it("keeps disconnected fixture Publisher controls locked", async () => {
     const user = userEvent.setup()
     stubLinkedInConnection({ connected: false, reconnectRequired: false })

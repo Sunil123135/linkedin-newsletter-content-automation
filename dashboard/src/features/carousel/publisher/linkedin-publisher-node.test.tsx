@@ -8,6 +8,7 @@ describe("LinkedInPublisherNode", () => {
     render(
       <LinkedInPublisherNode
         state="published"
+        connected
         connectionName="Ada Lovelace"
         approvedRevision={3}
         postUrl="https://www.linkedin.com/feed/update/urn:li:share:post-789"
@@ -22,5 +23,12 @@ describe("LinkedInPublisherNode", () => {
       "href",
       "https://www.linkedin.com/feed/update/urn:li:share:post-789",
     )
+  })
+
+  it("keeps connected presentation when LinkedIn omits the display name", () => {
+    render(<LinkedInPublisherNode state="locked" connected />)
+
+    expect(screen.getByText("Connected as LinkedIn member")).toBeVisible()
+    expect(screen.queryByText("LinkedIn not connected")).not.toBeInTheDocument()
   })
 })

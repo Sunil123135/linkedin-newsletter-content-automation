@@ -89,6 +89,7 @@ function AutomationWorkspace({ workflow }: { workflow: WorkflowKind }) {
                 <CardContent className="pt-5">
                   <LinkedInPublisherNode
                     state={publisherState}
+                    connected={publisherConnection.connected}
                     connectionName={
                       publisherConnection.connected
                         ? publisherConnection.displayName
