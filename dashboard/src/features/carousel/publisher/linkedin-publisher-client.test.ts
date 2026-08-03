@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest"
 import {
   LinkedInPublisherApiError,
   getLinkedInConnection,
+  getLinkedInPublisherPreflight,
   publishCarousel,
 } from "./linkedin-publisher-client"
 
@@ -24,6 +25,34 @@ describe("LinkedIn publisher client", () => {
     expect(fetch).toHaveBeenCalledWith("/api/linkedin/connection", {
       credentials: "same-origin",
       headers: { accept: "application/json" },
+    })
+  })
+
+  it("loads a run-and-revision-scoped preflight containing only safe review metadata", async () => {
+    const fetch = vi.fn(async () => Response.json(preflight))
+
+    await expect(getLinkedInPublisherPreflight("run-123", 3, fetch)).resolves.toEqual(preflight)
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/linkedin/preflight?runId=run-123&revision=3",
+      {
+        credentials: "same-origin",
+        headers: { accept: "application/json" },
+      },
+    )
+  })
+
+  it("rejects preflight metadata containing an unsafe preview URL or extra manifest fields", async () => {
+    const fetch = vi.fn(async () => Response.json({
+      ...preflight,
+      storageKey: "run-123/slides/01.png",
+      pages: [{
+        ...preflight.pages[0],
+        previewUrl: "https://attacker.example/slide.png",
+      }, ...preflight.pages.slice(1)],
+    }))
+
+    await expect(getLinkedInPublisherPreflight("run-123", 3, fetch)).rejects.toMatchObject({
+      code: "INVALID_UPSTREAM_RESPONSE",
     })
   })
 
@@ -50,6 +79,7 @@ describe("LinkedIn publisher client", () => {
     const promise = publishCarousel({
       runId: "run-123",
       revision: 3,
+      artifactChecksum: preflight.artifactChecksum,
       idempotencyKey: "8ec7ccdb-22bc-469b-99c6-7f0fc6d92951",
     }, fetch)
 
@@ -72,6 +102,7 @@ describe("LinkedIn publisher client", () => {
     await expect(publishCarousel({
       runId: "run-123",
       revision: 3,
+      artifactChecksum: preflight.artifactChecksum,
       idempotencyKey: "8ec7ccdb-22bc-469b-99c6-7f0fc6d92951",
     }, fetch)).resolves.toEqual({
       postUrn: "urn:li:share:post-789",
@@ -88,6 +119,7 @@ describe("LinkedIn publisher client", () => {
       body: JSON.stringify({
         runId: "run-123",
         revision: 3,
+        artifactChecksum: preflight.artifactChecksum,
         idempotencyKey: "8ec7ccdb-22bc-469b-99c6-7f0fc6d92951",
       }),
     })
@@ -99,6 +131,7 @@ describe("LinkedIn publisher client", () => {
     await expect(publishCarousel({
       runId: "run-123",
       revision: 3,
+      artifactChecksum: preflight.artifactChecksum,
       idempotencyKey: "8ec7ccdb-22bc-469b-99c6-7f0fc6d92951",
     }, fetch)).rejects.toMatchObject({
       name: "LinkedInPublisherApiError",
@@ -108,3 +141,18 @@ describe("LinkedIn publisher client", () => {
     } satisfies Partial<LinkedInPublisherApiError>)
   })
 })
+
+const preflight = {
+  runId: "run-123",
+  revision: 3,
+  artifactChecksum: "a".repeat(64),
+  documentTitle: "AI systems that recover safely",
+  caption: "Five field-tested lessons for dependable agents.",
+  pages: [1, 2, 3, 4, 5].map((index) => ({
+    index,
+    altText: `Slide ${index}`,
+    mimeType: "image/png" as const,
+    checksum: String(index).repeat(64),
+    previewUrl: `/api/linkedin/preflight/preview?runId=run-123&revision=3&index=${index}&checksum=${String(index).repeat(64)}`,
+  })),
+}

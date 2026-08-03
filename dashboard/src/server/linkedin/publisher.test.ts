@@ -15,17 +15,23 @@ import type {
   PublishAttemptStore,
 } from "./publish-attempt-store"
 import { PublishAttemptConflictError } from "./publish-attempt-store"
+import { buildApprovedArtifactChecksum } from "./preflight"
 import {
   ApprovedCarouselPublisher,
   type LinkedInDocumentClient,
   type LinkedInPublishResult,
 } from "./publisher"
 
-const identity: PublishAttemptIdentity = {
+const attemptIdentity: PublishAttemptIdentity = {
   runId: "run-123",
   revision: 3,
   idempotencyKey: "8ec7ccdb-22bc-469b-99c6-7f0fc6d92951",
 }
+const identity = {
+  ...attemptIdentity,
+  artifactChecksum: "",
+}
+identity.artifactChecksum = buildApprovedArtifactChecksum(approvedRun().run)
 const credential: LinkedInCredential = {
   accessToken: "secret-access-token",
   expiresAt: 1_900_000_000_000,
@@ -124,7 +130,7 @@ describe("ApprovedCarouselPublisher", () => {
 
     const uploaded = fixture.transitions[0]?.next
     expect(uploaded).toEqual({
-      ...identity,
+      ...attemptIdentity,
       state: "document_uploaded",
       startedAt: "2026-08-03T10:00:00.000Z",
       documentUrn,
@@ -132,6 +138,21 @@ describe("ApprovedCarouselPublisher", () => {
     })
     expect(fixture.events.indexOf("transition:started->document_uploaded"))
       .toBeLessThan(fixture.events.indexOf(`post:${credential.authorUrn}:${documentUrn}`))
+  })
+
+  it("revalidates the exact preflight checksum before any LinkedIn request", async () => {
+    const fixture = createFixture()
+
+    await expect(fixture.publisher.publish({
+      ...identity,
+      artifactChecksum: "f".repeat(64),
+      credential,
+    })).rejects.toMatchObject({ code: "STALE_REVISION" })
+    expect(fixture.events).toEqual([
+      "begin:run-123:3",
+      "load:run-123:3",
+      "transition:started->failed_safe",
+    ])
   })
 
   it("records unknown when post creation has an ambiguous network failure", async () => {
@@ -358,7 +379,7 @@ function approvedRun(): LoadedApprovedCarouselRun {
 
 function startedRecord(): Extract<PublishAttemptRecord, { state: "started" }> {
   return {
-    ...identity,
+    ...attemptIdentity,
     state: "started",
     startedAt: "2026-08-03T10:00:00.000Z",
   }
@@ -366,7 +387,7 @@ function startedRecord(): Extract<PublishAttemptRecord, { state: "started" }> {
 
 function publishedRecord(): Extract<PublishAttemptRecord, { state: "published" }> {
   return {
-    ...identity,
+    ...attemptIdentity,
     state: "published",
     startedAt: "2026-08-03T10:00:00.000Z",
     documentUrn,

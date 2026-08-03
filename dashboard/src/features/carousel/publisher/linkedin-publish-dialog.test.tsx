@@ -12,8 +12,10 @@ describe("LinkedInPublishDialog", () => {
     expect(screen.getByRole("dialog", { name: "Publish carousel to LinkedIn" })).toBeVisible()
     expect(screen.getByText("Ada Lovelace")).toBeVisible()
     expect(screen.getByText("AI Catalyst: The operating model")).toBeVisible()
+    expect(screen.getByText("A concise, server-validated caption.")).toBeVisible()
     expect(screen.getByText("5-page PDF")).toBeVisible()
     expect(screen.getByText("Public")).toBeVisible()
+    expect(screen.getAllByRole("img", { name: /Validated slide/ })).toHaveLength(5)
     expect(screen.getByText("Clicking Publish document creates a real public LinkedIn post.")).toBeVisible()
   })
 
@@ -77,6 +79,12 @@ function renderDialog({
         onOpenChange={setOpen}
         connectedProfileName="Ada Lovelace"
         documentTitle="AI Catalyst: The operating model"
+        caption="A concise, server-validated caption."
+        pages={[1, 2, 3, 4, 5].map((index) => ({
+          index,
+          altText: `Validated slide ${index}`,
+          previewUrl: `/api/linkedin/preflight/preview?runId=run-123&revision=3&index=${index}&checksum=${String(index).repeat(64)}`,
+        }))}
         publishing={false}
         onConfirm={onConfirm}
       />

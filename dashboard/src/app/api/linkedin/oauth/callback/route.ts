@@ -35,6 +35,9 @@ export async function GET(request: NextRequest) {
 
   try {
     const tokens = await exchangeAuthorizationCode(code, config)
+    if (!hasGrantedScope(tokens.scope, "w_member_social")) {
+      return failureRedirect(request, "scope_missing")
+    }
     const identity = await verifyLinkedInIdToken(tokens.idToken, config)
     const response = redirect(request, "connected")
     new NextLinkedInCredentialStore(
@@ -56,10 +59,17 @@ export async function GET(request: NextRequest) {
   }
 }
 
-function failureRedirect(request: NextRequest, status: "state_invalid" | "denied" | "unavailable") {
+function failureRedirect(
+  request: NextRequest,
+  status: "state_invalid" | "denied" | "scope_missing" | "unavailable",
+) {
   const response = redirect(request, status)
   clearStateCookie(response)
   return response
+}
+
+function hasGrantedScope(granted: string, required: string): boolean {
+  return granted.split(/\s+/).includes(required)
 }
 
 function redirect(request: NextRequest, status: string) {

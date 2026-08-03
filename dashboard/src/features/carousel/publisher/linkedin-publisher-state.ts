@@ -14,6 +14,7 @@ export type LinkedInPublisherState =
 export interface PublishCarouselRequest {
   runId: string
   revision: number
+  artifactChecksum: string
   idempotencyKey: string
 }
 

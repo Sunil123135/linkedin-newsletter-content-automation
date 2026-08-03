@@ -9,9 +9,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 
 import {
   getLinkedInConnection,
+  getLinkedInPublisherPreflight,
   LinkedInPublisherApiError,
   publishCarousel,
   type LinkedInConnection,
+  type LinkedInPublisherPreflight,
 } from "./linkedin-publisher-client"
 import { LinkedInPublishDialog } from "./linkedin-publish-dialog"
 import type { LinkedInPublisherState, PublishCarouselRequest } from "./linkedin-publisher-state"
@@ -29,8 +31,6 @@ export interface LinkedInConnectionPresentation {
   displayName?: string
 }
 
-const DOCUMENT_TITLE = "Approved carousel document"
-
 export function LinkedInPublisherPanel({
   runId,
   revision,
@@ -40,6 +40,9 @@ export function LinkedInPublisherPanel({
 }: LinkedInPublisherPanelProps) {
   const executionIdentity = identityFor(runId, revision)
   const [connection, setConnection] = useState<LinkedInConnection | null>(null)
+  const [preflight, setPreflight] = useState<LinkedInPublisherPreflight>()
+  const [preflightIdentity, setPreflightIdentity] = useState<string | null>(null)
+  const [preflightFailure, setPreflightFailure] = useState<LinkedInPublisherApiError>()
   const [dialogIdentity, setDialogIdentity] = useState<string | null>(null)
   const [publishingIdentity, setPublishingIdentity] = useState<string | null>(null)
   const [outcomeIdentity, setOutcomeIdentity] = useState<string | null>(null)
@@ -69,6 +72,38 @@ export function LinkedInPublisherPanel({
   }, [])
 
   useEffect(() => {
+    const requestIdentity = executionIdentity
+    if (!connection?.connected || !artifactReady || !runId || revision === null || !requestIdentity) {
+      queueMicrotask(() => {
+        if (currentIdentity.current !== requestIdentity) return
+        setPreflight(undefined)
+        setPreflightIdentity(null)
+        setPreflightFailure(undefined)
+      })
+      return
+    }
+
+    let cancelled = false
+    setPreflight(undefined)
+    setPreflightIdentity(null)
+    setPreflightFailure(undefined)
+    void getLinkedInPublisherPreflight(runId, revision)
+      .then((result) => {
+        if (cancelled || !mounted.current || currentIdentity.current !== requestIdentity) return
+        setPreflight(result)
+        setPreflightIdentity(requestIdentity)
+      })
+      .catch((error) => {
+        if (cancelled || !mounted.current || currentIdentity.current !== requestIdentity) return
+        setPreflightFailure(toSafeApiError(error))
+        setPreflightIdentity(requestIdentity)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [artifactReady, connection?.connected, executionIdentity, revision, runId])
+
+  useEffect(() => {
     const identityToReset = executionIdentity
     queueMicrotask(() => {
       if (currentIdentity.current !== identityToReset) return
@@ -82,6 +117,12 @@ export function LinkedInPublisherPanel({
   }, [executionIdentity])
 
   const hasScopedIdentity = executionIdentity !== null
+  const scopedPreflight = hasScopedIdentity && preflightIdentity === executionIdentity
+    ? preflight
+    : undefined
+  const scopedPreflightFailure = hasScopedIdentity && preflightIdentity === executionIdentity
+    ? preflightFailure
+    : undefined
   const scopedPostUrl = hasScopedIdentity && outcomeIdentity === executionIdentity ? postUrl : undefined
   const scopedFailure = hasScopedIdentity && outcomeIdentity === executionIdentity ? failure : undefined
   const publishing = hasScopedIdentity && publishingIdentity === executionIdentity
@@ -98,6 +139,7 @@ export function LinkedInPublisherPanel({
 
   const state = publisherState({
     connection,
+    preflightReady: scopedPreflight !== undefined,
     artifactReady,
     hasExecutionIdentity: executionIdentity !== null,
     publishing,
@@ -122,12 +164,13 @@ export function LinkedInPublisherPanel({
   }
 
   async function confirmPublish() {
-    if (!runId || !revision || !executionIdentity || !connection?.connected || !artifactReady || publishing) return
+    if (!runId || !revision || !executionIdentity || !connection?.connected || !scopedPreflight || publishing) return
 
     const requestIdentity = executionIdentity
     const request: PublishCarouselRequest = {
       runId,
       revision,
+      artifactChecksum: scopedPreflight.artifactChecksum,
       idempotencyKey: crypto.randomUUID(),
     }
     setPublishingIdentity(requestIdentity)
@@ -160,7 +203,7 @@ export function LinkedInPublisherPanel({
 
   const action = actionFor({
     connection,
-    artifactReady,
+    preflightReady: scopedPreflight !== undefined,
     hasExecutionIdentity: executionIdentity !== null,
     publishing,
     postUrl: scopedPostUrl,
@@ -170,7 +213,13 @@ export function LinkedInPublisherPanel({
     ? "Publishing is locked until an approved carousel artifact is available."
     : executionIdentity === null
       ? "Publishing is locked until an approved run and revision are available."
-      : undefined
+      : scopedPreflightFailure?.code === "STALE_REVISION"
+        ? "This carousel revision is stale. Rerun and approve the current revision before publishing."
+        : scopedPreflightFailure
+          ? "Publishing is locked because the approved artifact could not be validated."
+          : connection?.connected && !scopedPreflight
+            ? "Validating the approved carousel on the server…"
+            : undefined
 
   return (
     <Card className="overflow-hidden">
@@ -264,7 +313,9 @@ export function LinkedInPublisherPanel({
         open={dialogOpen}
         onOpenChange={(open) => setDialogIdentity(open ? executionIdentity : null)}
         connectedProfileName={connection?.displayName ?? "LinkedIn member"}
-        documentTitle={DOCUMENT_TITLE}
+        documentTitle={scopedPreflight?.documentTitle ?? "Approved carousel document"}
+        caption={scopedPreflight?.caption ?? ""}
+        pages={scopedPreflight?.pages ?? []}
         publishing={publishing}
         onConfirm={confirmPublish}
       />
@@ -274,25 +325,25 @@ export function LinkedInPublisherPanel({
 
 function actionFor({
   connection,
-  artifactReady,
+  preflightReady,
   hasExecutionIdentity,
   publishing,
   postUrl,
   recovery,
 }: {
   connection: LinkedInConnection | null
-  artifactReady: boolean
+  preflightReady: boolean
   hasExecutionIdentity: boolean
   publishing: boolean
   postUrl?: string
   recovery: RecoveryPolicy
 }) {
   if (publishing || postUrl || connection === null) return null
-  if (!artifactReady || !hasExecutionIdentity) return null
+  if (!connection.connected) return connection.reconnectRequired ? "reconnect" : "connect"
+  if (!preflightReady || !hasExecutionIdentity) return null
   if (recovery.action === "retry") return "retry"
   if (recovery.action === "rateRetry") return "rateRetry"
   if (recovery.blocksPublish) return null
-  if (!connection.connected) return connection.reconnectRequired ? "reconnect" : "connect"
   return "publish"
 }
 
@@ -308,6 +359,7 @@ function connectionPresentationFor(
 
 function publisherState({
   connection,
+  preflightReady,
   artifactReady,
   hasExecutionIdentity,
   publishing,
@@ -315,6 +367,7 @@ function publisherState({
   failure,
 }: {
   connection: LinkedInConnection | null
+  preflightReady: boolean
   artifactReady: boolean
   hasExecutionIdentity: boolean
   publishing: boolean
@@ -326,7 +379,7 @@ function publisherState({
   if (failure?.code === "STALE_REVISION" || failure?.code === "INVALID_ARTIFACT") return "locked"
   if (failure) return "failed"
   if (!connection?.connected) return "disconnected"
-  if (!artifactReady || !hasExecutionIdentity) return "locked"
+  if (!artifactReady || !hasExecutionIdentity || !preflightReady) return "locked"
   return "ready"
 }
 

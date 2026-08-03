@@ -17,6 +17,7 @@ import { ApprovedCarouselPublisher } from "@/server/linkedin/publisher"
 const publishRequestSchema = z.object({
   runId: z.string().min(1).max(128),
   revision: z.number().int().positive(),
+  artifactChecksum: z.string().regex(/^[a-f0-9]{64}$/),
   idempotencyKey: z.string().uuid(),
 }).strict()
 

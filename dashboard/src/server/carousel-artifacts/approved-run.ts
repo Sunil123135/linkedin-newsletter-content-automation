@@ -15,8 +15,8 @@ export const approvedCarouselRunSchema = z.object({
   id: z.string().min(1),
   revision: z.number().int().positive(),
   status: z.literal("approved"),
-  caption: z.string().min(1).max(3000),
-  documentTitle: z.string().min(1).max(200),
+  caption: z.string().trim().min(1).max(3000),
+  documentTitle: z.string().trim().min(1).max(200),
   slides: z.array(carouselSlideAssetSchema).length(5),
 }).superRefine((run, context) => {
   const indexes = run.slides.map((slide) => slide.index)

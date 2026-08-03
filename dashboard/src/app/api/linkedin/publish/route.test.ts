@@ -10,6 +10,7 @@ import { POST } from "./route"
 const body = {
   runId: "run-123",
   revision: 3,
+  artifactChecksum: "a".repeat(64),
   idempotencyKey: "8ec7ccdb-22bc-469b-99c6-7f0fc6d92951",
 }
 const credential: LinkedInCredential = {
@@ -38,6 +39,7 @@ describe("POST /api/linkedin/publish", () => {
     [{ ...body, runId: "" }],
     [{ ...body, revision: 0 }],
     [{ ...body, revision: 1.5 }],
+    [{ ...body, artifactChecksum: "not-a-sha256" }],
     [{ ...body, idempotencyKey: "not-a-uuid" }],
   ])("rejects malformed input before publishing: %j", async (invalidBody) => {
     let publishCalls = 0
@@ -190,6 +192,23 @@ describe("POST /api/linkedin/publish", () => {
     expect(JSON.stringify(responseBody)).not.toContain(credential.accessToken)
     expect(JSON.stringify(responseBody)).not.toContain(credential.subject)
     expect(response.headers.get("cache-control")).toBe("no-store")
+  })
+
+  it("passes the server-bound artifact checksum into publish revalidation", async () => {
+    let publishedInput: unknown
+    const handler = routeWithPublisher(async (input) => {
+      publishedInput = input
+      return {
+        postUrn: "urn:li:share:post-789",
+        postUrl: "https://www.linkedin.com/feed/update/urn:li:share:post-789",
+        publishedAt: "2026-08-03T10:00:01.000Z",
+      }
+    })
+
+    const response = await handler(request(body))
+
+    expect(response.status).toBe(200)
+    expect(publishedInput).toMatchObject({ artifactChecksum: body.artifactChecksum })
   })
 })
 

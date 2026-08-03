@@ -13,6 +13,23 @@ export interface LinkedInPublishResult {
   publishedAt: string
 }
 
+export interface LinkedInPublisherPreflightPage {
+  index: 1 | 2 | 3 | 4 | 5
+  altText: string
+  mimeType: "image/png" | "image/jpeg"
+  checksum: string
+  previewUrl: string
+}
+
+export interface LinkedInPublisherPreflight {
+  runId: string
+  revision: number
+  artifactChecksum: string
+  documentTitle: string
+  caption: string
+  pages: LinkedInPublisherPreflightPage[]
+}
+
 export type LinkedInPublisherErrorCode =
   | "AUTH_REQUIRED"
   | "INSUFFICIENT_SCOPE"
@@ -53,6 +70,21 @@ export async function getLinkedInConnection(
   }
 
   return parseConnection(body)
+}
+
+export async function getLinkedInPublisherPreflight(
+  runId: string,
+  revision: number,
+  fetch: PublisherFetch = globalThis.fetch,
+): Promise<LinkedInPublisherPreflight> {
+  const query = new URLSearchParams({ runId, revision: String(revision) })
+  const response = await fetch(`/api/linkedin/preflight?${query}`, {
+    credentials: "same-origin",
+    headers: { accept: "application/json" },
+  })
+  const body = await safeJson(response)
+  if (!response.ok) throw toApiError(response.status, body)
+  return parsePreflight(body, runId, revision, response.status)
 }
 
 export async function publishCarousel(
@@ -111,6 +143,105 @@ function parseConnection(body: unknown): LinkedInConnection {
     ...(typeof body.expiresAt === "number" ? { expiresAt: body.expiresAt } : {}),
     reconnectRequired: body.reconnectRequired === true,
   }
+}
+
+function parsePreflight(
+  body: unknown,
+  requestedRunId: string,
+  requestedRevision: number,
+  status: number,
+): LinkedInPublisherPreflight {
+  if (!isRecord(body)
+    || !hasExactKeys(body, [
+      "runId",
+      "revision",
+      "artifactChecksum",
+      "documentTitle",
+      "caption",
+      "pages",
+    ])
+    || body.runId !== requestedRunId
+    || body.revision !== requestedRevision
+    || !isSha256(body.artifactChecksum)
+    || typeof body.documentTitle !== "string"
+    || body.documentTitle.trim().length === 0
+    || typeof body.caption !== "string"
+    || body.caption.trim().length === 0
+    || !Array.isArray(body.pages)
+    || body.pages.length !== 5) {
+    throw invalidPreflight(status)
+  }
+
+  const pages = body.pages.map((page, offset) => parsePreflightPage(
+    page,
+    offset + 1,
+    requestedRunId,
+    requestedRevision,
+    status,
+  ))
+  return {
+    runId: body.runId,
+    revision: body.revision,
+    artifactChecksum: body.artifactChecksum,
+    documentTitle: body.documentTitle,
+    caption: body.caption,
+    pages,
+  }
+}
+
+function parsePreflightPage(
+  value: unknown,
+  expectedIndex: number,
+  runId: string,
+  revision: number,
+  status: number,
+): LinkedInPublisherPreflightPage {
+  if (!isRecord(value)
+    || !hasExactKeys(value, ["index", "altText", "mimeType", "checksum", "previewUrl"])
+    || value.index !== expectedIndex
+    || typeof value.altText !== "string"
+    || value.altText.trim().length === 0
+    || (value.mimeType !== "image/png" && value.mimeType !== "image/jpeg")
+    || !isSha256(value.checksum)
+    || typeof value.previewUrl !== "string"
+    || !isSafePreviewUrl(value.previewUrl, runId, revision, expectedIndex, value.checksum)) {
+    throw invalidPreflight(status)
+  }
+  return value as unknown as LinkedInPublisherPreflightPage
+}
+
+function isSafePreviewUrl(
+  value: string,
+  runId: string,
+  revision: number,
+  index: number,
+  checksum: string,
+): boolean {
+  if (!value.startsWith("/api/linkedin/preflight/preview?")) return false
+  const url = new URL(value, "http://dashboard.local")
+  if (url.origin !== "http://dashboard.local"
+    || url.pathname !== "/api/linkedin/preflight/preview"
+    || [...url.searchParams.keys()].sort().join(",") !== "checksum,index,revision,runId") return false
+  return url.searchParams.get("runId") === runId
+    && url.searchParams.get("revision") === String(revision)
+    && url.searchParams.get("index") === String(index)
+    && url.searchParams.get("checksum") === checksum
+}
+
+function invalidPreflight(status: number): LinkedInPublisherApiError {
+  return new LinkedInPublisherApiError(
+    status,
+    "INVALID_UPSTREAM_RESPONSE",
+    "The approved carousel preflight response was invalid.",
+  )
+}
+
+function hasExactKeys(value: Record<string, unknown>, expected: string[]): boolean {
+  return Object.keys(value).sort().join(",") === [...expected].sort().join(",")
+}
+
+function isSha256(value: unknown): value is string {
+  return typeof value === "string" && /^[a-f0-9]{64}$/.test(value)
 }
 
 function toApiError(status: number, body: unknown): LinkedInPublisherApiError {

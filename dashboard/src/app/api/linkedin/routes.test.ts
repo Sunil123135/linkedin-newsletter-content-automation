@@ -127,6 +127,23 @@ describe("LinkedIn OAuth routes", () => {
     expect(credentialCookie?.value).not.toContain("linkedin-access-token")
     expect(response.headers.get("set-cookie")).toContain("HttpOnly")
   })
+
+  it("GET /oauth/callback refuses to store a credential without w_member_social", async () => {
+    const authorization = await beginAuthorization()
+    vi.stubGlobal("fetch", createSuccessfulLinkedInFetch(
+      await signIdToken(),
+      "openid profile",
+    ))
+
+    const response = await oauthCallback(callbackRequest(
+      `?code=authorization-code&state=${encodeURIComponent(authorization.state)}`,
+      authorization.cookie,
+    ))
+
+    expect(new URL(requiredHeader(response, "location")).searchParams.get("linkedin"))
+      .toBe("scope_missing")
+    expect(response.cookies.get(LINKEDIN_CREDENTIAL_COOKIE)).toBeUndefined()
+  })
 })
 
 describe("LinkedIn connection route", () => {
@@ -217,7 +234,10 @@ async function signIdToken() {
   return `${signingInput}.${signature.toString("base64url")}`
 }
 
-function createSuccessfulLinkedInFetch(idToken: string) {
+function createSuccessfulLinkedInFetch(
+  idToken: string,
+  scope = "openid profile w_member_social",
+) {
   return async (input: string | URL | Request) => {
     const url = input.toString()
     if (url === LINKEDIN_TOKEN_ENDPOINT) {
@@ -225,7 +245,7 @@ function createSuccessfulLinkedInFetch(idToken: string) {
         access_token: "linkedin-access-token",
         expires_in: 3600,
         id_token: idToken,
-        scope: "openid profile w_member_social",
+        scope,
         token_type: "Bearer",
       })
     }

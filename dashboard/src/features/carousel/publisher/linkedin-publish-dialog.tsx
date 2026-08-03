@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import Image from "next/image"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -17,6 +18,12 @@ export interface LinkedInPublishDialogProps {
   onOpenChange(open: boolean): void
   connectedProfileName: string
   documentTitle: string
+  caption: string
+  pages: ReadonlyArray<{
+    index: number
+    altText: string
+    previewUrl: string
+  }>
   publishing: boolean
   onConfirm(): Promise<void>
 }
@@ -26,6 +33,8 @@ export function LinkedInPublishDialog({
   onOpenChange,
   connectedProfileName,
   documentTitle,
+  caption,
+  pages,
   publishing,
   onConfirm,
 }: LinkedInPublishDialogProps) {
@@ -78,6 +87,32 @@ export function LinkedInPublishDialog({
             <dd className="font-medium">Public</dd>
           </div>
         </dl>
+
+        <div className="space-y-2">
+          <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Caption</p>
+          <p className="rounded-lg border bg-background p-3 text-sm whitespace-pre-wrap">{caption}</p>
+        </div>
+
+        <div className="space-y-2">
+          <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Validated pages</p>
+          <div className="grid grid-cols-5 gap-2">
+            {pages.map((page) => (
+              <figure key={page.index} className="space-y-1">
+                <Image
+                  className="aspect-square w-full rounded-md border object-cover"
+                  src={page.previewUrl}
+                  width={216}
+                  height={216}
+                  alt={page.altText}
+                  unoptimized
+                />
+                <figcaption className="text-center text-[10px] text-muted-foreground">
+                  Page {page.index}
+                </figcaption>
+              </figure>
+            ))}
+          </div>
+        </div>
 
         <p className="text-sm font-medium text-foreground">
           Clicking Publish document creates a real public LinkedIn post.

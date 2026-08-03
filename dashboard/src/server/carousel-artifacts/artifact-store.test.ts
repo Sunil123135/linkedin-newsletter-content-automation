@@ -94,6 +94,30 @@ describe("FileSystemCarouselArtifactStore", () => {
       .loadApprovedRun(fixture.run.id, fixture.run.revision))
       .rejects.toMatchObject({ code: "ASSET_MISSING" })
   })
+
+  it.each([
+    ["caption", "   "],
+    ["documentTitle", "\t\n"],
+  ] as const)("rejects a manifest whose %s is only whitespace", async (field, value) => {
+    const fixture = await createApprovedRunFixture({ [field]: value })
+
+    await expect(new FileSystemCarouselArtifactStore(fixture.artifactRoot)
+      .loadApprovedRun(fixture.run.id, fixture.run.revision))
+      .rejects.toMatchObject({ code: "INVALID_MANIFEST" })
+  })
+
+  it("normalizes surrounding whitespace in the approved title and caption", async () => {
+    const fixture = await createApprovedRunFixture({
+      caption: "  A practical lesson from the field.  ",
+      documentTitle: "  Reliable carousels  ",
+    })
+
+    const loaded = await new FileSystemCarouselArtifactStore(fixture.artifactRoot)
+      .loadApprovedRun(fixture.run.id, fixture.run.revision)
+
+    expect(loaded.run.caption).toBe("A practical lesson from the field.")
+    expect(loaded.run.documentTitle).toBe("Reliable carousels")
+  })
 })
 
 interface FixtureOverrides {
@@ -102,6 +126,8 @@ interface FixtureOverrides {
   storageKey?: string
   storageKeyRoot?: string
   checksum?: string
+  caption?: string
+  documentTitle?: string
 }
 
 async function expectArtifactValidationError(promise: Promise<unknown>, code: string) {
@@ -125,8 +151,8 @@ async function createApprovedRunFixture(overrides: FixtureOverrides = {}) {
     id: overrides.manifestId ?? requestedRunId,
     revision: 3,
     status: overrides.status ?? "approved",
-    caption: "A practical lesson from the field.",
-    documentTitle: "Reliable carousels",
+    caption: overrides.caption ?? "A practical lesson from the field.",
+    documentTitle: overrides.documentTitle ?? "Reliable carousels",
     slides: await Promise.all([1, 2, 3, 4, 5].map(async (index) => {
       const storageKey = overrides.storageKey ?? `${overrides.storageKeyRoot ?? requestedRunId}/slides/0${index}.png`
       const bytes = create1080SquarePng(index)

@@ -74,7 +74,8 @@ describe("LinkedInPublisherPanel", () => {
     render(<LinkedInPublisherPanel {...panelProps} artifactReady={false} />)
 
     expect(await screen.findByText("Publishing is locked until an approved carousel artifact is available.")).toBeVisible()
-    expect(screen.queryByRole("button", { name: /Connect LinkedIn|Reconnect LinkedIn|Publish to LinkedIn/ })).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Connect LinkedIn" })).toBeEnabled()
+    expect(screen.queryByRole("button", { name: "Publish to LinkedIn" })).not.toBeInTheDocument()
   })
 
   it("keeps a disconnected Publisher locked when the approved run identity is missing", async () => {
@@ -83,7 +84,8 @@ describe("LinkedInPublisherPanel", () => {
     render(<LinkedInPublisherPanel {...panelProps} runId={null} />)
 
     expect(await screen.findByText("Publishing is locked until an approved run and revision are available.")).toBeVisible()
-    expect(screen.queryByRole("button", { name: /Connect LinkedIn|Reconnect LinkedIn|Publish to LinkedIn/ })).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Connect LinkedIn" })).toBeEnabled()
+    expect(screen.queryByRole("button", { name: "Publish to LinkedIn" })).not.toBeInTheDocument()
   })
 
   it("locks an artifact without a run identity", async () => {
@@ -117,6 +119,37 @@ describe("LinkedInPublisherPanel", () => {
     expect(screen.getByText("Connected as Ada Lovelace")).toBeVisible()
   })
 
+  it("uses only server-validated title, caption, and five previews in final confirmation", async () => {
+    stubFetch(connectionResponse(connectedConnection))
+    const user = userEvent.setup()
+
+    render(<LinkedInPublisherPanel {...panelProps} />)
+    await user.click(await screen.findByRole("button", { name: "Publish to LinkedIn" }))
+
+    expect(screen.getByText(preflight.documentTitle)).toBeVisible()
+    expect(screen.getByText(preflight.caption)).toBeVisible()
+    expect(screen.getAllByRole("img", { name: /Server slide/ })).toHaveLength(5)
+  })
+
+  it("keeps a changed revision locked when its server preflight is stale", async () => {
+    const fetch = vi.fn<PublisherFetch>(async (input) => {
+      const url = String(input)
+      if (url === "/api/linkedin/connection") return connectionResponse(connectedConnection)
+      if (url.includes("revision=4")) {
+        return errorResponse("STALE_REVISION", 409, "The approved carousel revision has changed.")
+      }
+      return Response.json(preflight)
+    })
+    vi.stubGlobal("fetch", fetch)
+    const view = render(<LinkedInPublisherPanel {...panelProps} />)
+    await screen.findByRole("button", { name: "Publish to LinkedIn" })
+
+    view.rerender(<LinkedInPublisherPanel {...panelProps} revision={4} />)
+
+    expect(await screen.findByText("This carousel revision is stale. Rerun and approve the current revision before publishing.")).toBeVisible()
+    expect(screen.queryByRole("button", { name: "Publish to LinkedIn" })).not.toBeInTheDocument()
+  })
+
   it("does not call publish before the confirmation button is clicked", async () => {
     const fetch = stubFetch(connectionResponse(connectedConnection))
     const user = userEvent.setup()
@@ -126,7 +159,7 @@ describe("LinkedInPublisherPanel", () => {
     await user.click(await screen.findByRole("button", { name: "Publish to LinkedIn" }))
 
     expect(screen.getByRole("dialog")).toBeVisible()
-    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(fetch.mock.calls.some(([input]) => String(input) === "/api/linkedin/publish")).toBe(false)
   })
 
   it("disables all actions while publishing", async () => {
@@ -219,10 +252,12 @@ describe("LinkedInPublisherPanel", () => {
     await user.click(screen.getByRole("button", { name: "Publish document" }))
 
     await screen.findByRole("link", { name: "View LinkedIn post" })
-    const firstPublishBody = JSON.parse(fetch.mock.calls[1][1]?.body as string)
-    const retriedPublishBody = JSON.parse(fetch.mock.calls[2][1]?.body as string)
+    const publishCalls = fetch.mock.calls.filter(([input]) => String(input) === "/api/linkedin/publish")
+    const firstPublishBody = JSON.parse(publishCalls[0][1]?.body as string)
+    const retriedPublishBody = JSON.parse(publishCalls[1][1]?.body as string)
     expect(retriedPublishBody).toEqual(firstPublishBody)
     expect(firstPublishBody).toMatchObject({ runId: "run-123", revision: 3 })
+    expect(firstPublishBody.artifactChecksum).toBe(preflight.artifactChecksum)
   })
 
   it("requires manual recovery for UNKNOWN_OUTCOME", async () => {
@@ -429,6 +464,21 @@ const publishResult = {
   publishedAt: "2026-08-03T10:00:01.000Z",
 }
 
+const preflight = {
+  runId: "run-123",
+  revision: 3,
+  artifactChecksum: "a".repeat(64),
+  documentTitle: "Server-approved field guide",
+  caption: "Server-approved caption for the public post.",
+  pages: [1, 2, 3, 4, 5].map((index) => ({
+    index,
+    altText: `Server slide ${index}`,
+    mimeType: "image/png" as const,
+    checksum: String(index).repeat(64),
+    previewUrl: `/api/linkedin/preflight/preview?runId=run-123&revision=3&index=${index}&checksum=${String(index).repeat(64)}`,
+  })),
+}
+
 function connectionResponse(connection: object): Response {
   return Response.json(connection)
 }
@@ -445,7 +495,14 @@ function errorResponse(
 }
 
 function stubFetch(...responses: Array<Response | Promise<Response> | Error>) {
-  const fetch = vi.fn<PublisherFetch>(async () => {
+  const fetch = vi.fn<PublisherFetch>(async (input) => {
+    if (String(input).startsWith("/api/linkedin/preflight?")) {
+      const url = new URL(String(input), "http://localhost")
+      return Response.json(preflightFor(
+        url.searchParams.get("runId") ?? "",
+        Number(url.searchParams.get("revision")),
+      ))
+    }
     const response = responses.shift()
     if (!response) throw new Error("Unexpected fetch")
     if (response instanceof Error) throw response
@@ -453,6 +510,18 @@ function stubFetch(...responses: Array<Response | Promise<Response> | Error>) {
   })
   vi.stubGlobal("fetch", fetch)
   return fetch
+}
+
+function preflightFor(runId: string, revision: number) {
+  return {
+    ...preflight,
+    runId,
+    revision,
+    pages: preflight.pages.map((page) => ({
+      ...page,
+      previewUrl: `/api/linkedin/preflight/preview?runId=${encodeURIComponent(runId)}&revision=${revision}&index=${page.index}&checksum=${page.checksum}`,
+    })),
+  }
 }
 
 function deferredResponse() {

@@ -19,6 +19,7 @@ import type {
   StartedPublishAttempt,
 } from "./publish-attempt-store"
 import { PublishAttemptConflictError } from "./publish-attempt-store"
+import { buildApprovedArtifactChecksum } from "./preflight"
 
 export interface LinkedInPublishResult {
   postUrn: string
@@ -45,6 +46,7 @@ export interface LinkedInDocumentClient {
 
 export interface PublishApprovedCarouselInput extends PublishAttemptIdentity {
   credential: LinkedInCredential
+  artifactChecksum: string
 }
 
 interface ApprovedCarouselPublisherDependencies {
@@ -92,6 +94,12 @@ export class ApprovedCarouselPublisher {
     let loaded
     try {
       loaded = await this.dependencies.artifactStore.loadApprovedRun(input.runId, input.revision)
+      if (buildApprovedArtifactChecksum(loaded.run) !== input.artifactChecksum) {
+        throw new ArtifactValidationError(
+          "STALE_REVISION",
+          "The approved carousel changed after publisher preflight",
+        )
+      }
     } catch (error) {
       await this.failSafely(identity, started, error)
       throw classifyArtifactError(error)

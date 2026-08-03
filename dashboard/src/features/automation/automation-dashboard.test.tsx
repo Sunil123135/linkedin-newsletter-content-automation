@@ -14,7 +14,7 @@ function renderDashboard(workflow: "carousel" | "newsletter") {
   )
 }
 
-function stubLinkedInConnection(connection: {
+  function stubLinkedInConnection(connection: {
   connected: boolean
   reconnectRequired: boolean
   displayName?: string
@@ -23,9 +23,12 @@ function stubLinkedInConnection(connection: {
   reconnectRequired: false,
   displayName: "Ada Lovelace",
 }) {
-  const fetch = vi.fn().mockResolvedValue(
-    Response.json(connection)
-  )
+  const fetch = vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input).startsWith("/api/linkedin/preflight?")) {
+      throw new Error("Fixture artifacts must never request a publisher preflight")
+    }
+    return Response.json(connection)
+  })
   vi.stubGlobal("fetch", fetch)
   return fetch
 }
@@ -125,7 +128,7 @@ describe("AutomationDashboard", () => {
     )
   })
 
-  it("keeps disconnected fixture Publisher controls locked", async () => {
+  it("keeps disconnected fixture Publish locked while leaving Connect reachable", async () => {
     const user = userEvent.setup()
     stubLinkedInConnection({ connected: false, reconnectRequired: false })
     renderDashboard("carousel")
@@ -134,7 +137,8 @@ describe("AutomationDashboard", () => {
 
     expect(await screen.findByText("LinkedIn not connected")).toBeVisible()
     expect(screen.getByText("Publishing is locked until an approved carousel artifact is available.")).toBeVisible()
-    expect(screen.queryByRole("button", { name: /Connect LinkedIn|Reconnect LinkedIn|Publish to LinkedIn/ })).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Connect LinkedIn" })).toBeEnabled()
+    expect(screen.queryByRole("button", { name: "Publish to LinkedIn" })).not.toBeInTheDocument()
   })
 
   it("associates the selected Publisher node with its details region only", async () => {
