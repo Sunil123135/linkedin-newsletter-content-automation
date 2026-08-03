@@ -92,12 +92,15 @@ export function LinkedInPublisherPanel({
     }
 
     let cancelled = false
-    setPreflight(undefined)
-    setPreflightIdentity(null)
-    setPreflightFailure(undefined)
-    setPublishStatus(undefined)
-    setPublishStatusIdentity(null)
-    setPublishStatusFailure(undefined)
+    queueMicrotask(() => {
+      if (cancelled || currentIdentity.current !== requestIdentity) return
+      setPreflight(undefined)
+      setPreflightIdentity(null)
+      setPreflightFailure(undefined)
+      setPublishStatus(undefined)
+      setPublishStatusIdentity(null)
+      setPublishStatusFailure(undefined)
+    })
     void getLinkedInPublisherPreflight(runId, revision)
       .then((result) => {
         if (cancelled || !mounted.current || currentIdentity.current !== requestIdentity) return
