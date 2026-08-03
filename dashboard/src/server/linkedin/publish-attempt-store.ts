@@ -5,6 +5,7 @@ import {
   readFile,
   readdir,
   rename,
+  stat,
   unlink,
   type FileHandle,
 } from "node:fs/promises"
@@ -92,6 +93,7 @@ export class PublishAttemptConflictError extends Error {
 }
 
 export class FileSystemPublishAttemptStore implements PublishAttemptStore {
+  private readonly resolvedArtifactRoot: string
   private readonly attemptDirectory: string
 
   constructor(
@@ -102,11 +104,12 @@ export class FileSystemPublishAttemptStore implements PublishAttemptStore {
     if (!artifactRoot) {
       throw new Error("CAROUSEL_ARTIFACT_ROOT must be configured")
     }
-    this.attemptDirectory = path.join(path.resolve(artifactRoot), ".publish-attempts")
+    this.resolvedArtifactRoot = path.resolve(artifactRoot)
+    this.attemptDirectory = path.join(this.resolvedArtifactRoot, ".publish-attempts")
   }
 
   async begin(identity: PublishAttemptIdentity): Promise<BeginAttemptResult> {
-    await mkdir(this.attemptDirectory, { recursive: true })
+    await this.ensureAttemptDirectory()
     const scopeLock = await this.acquireLock(this.scopeLockPath(identity))
     try {
       const records = await this.readAllRecords()
@@ -224,6 +227,33 @@ export class FileSystemPublishAttemptStore implements PublishAttemptStore {
     }
   }
 
+  private async ensureAttemptDirectory(): Promise<void> {
+    if (await isRegularFile(this.initializationMarkerPath())) return
+
+    const lockPath = path.join(this.resolvedArtifactRoot, ".publish-attempts.init.lock")
+    const lock = await this.acquireLock(lockPath)
+    try {
+      if (await isRegularFile(this.initializationMarkerPath())) return
+
+      try {
+        await mkdir(this.attemptDirectory)
+      } catch (error) {
+        if (!isFileSystemError(error, "EEXIST")) throw error
+        const existing = await stat(this.attemptDirectory)
+        if (!existing.isDirectory()) {
+          throw new Error("The publish-attempt path must be a directory")
+        }
+      }
+
+      await this.syncDirectory(this.resolvedArtifactRoot)
+      await createInitializationMarker(this.initializationMarkerPath())
+      await this.syncDirectory(this.attemptDirectory)
+    } finally {
+      await this.releaseLock(lock, lockPath)
+      await this.syncDirectory(this.resolvedArtifactRoot)
+    }
+  }
+
   private async readAllRecords(): Promise<PublishAttemptRecord[]> {
     const files = await readdir(this.attemptDirectory)
     return Promise.all(files
@@ -258,6 +288,10 @@ export class FileSystemPublishAttemptStore implements PublishAttemptStore {
 
   private scopeLockPath(identity: PublishAttemptIdentity): string {
     return path.join(this.attemptDirectory, `${scopeHash(identity)}.scope.lock`)
+  }
+
+  private initializationMarkerPath(): string {
+    return path.join(this.attemptDirectory, ".initialized")
   }
 }
 
@@ -352,6 +386,26 @@ function isFileSystemError(error: unknown, code: string): error is NodeJS.ErrnoE
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
+}
+
+async function isRegularFile(filePath: string): Promise<boolean> {
+  try {
+    return (await stat(filePath)).isFile()
+  } catch (error) {
+    if (isFileSystemError(error, "ENOENT")) return false
+    throw error
+  }
+}
+
+async function createInitializationMarker(markerPath: string): Promise<void> {
+  let handle: FileHandle | undefined
+  try {
+    handle = await open(markerPath, "wx", 0o600)
+    await handle.writeFile("initialized\n", "utf8")
+    await handle.sync()
+  } finally {
+    await handle?.close()
+  }
 }
 
 async function atomicReplace(source: string, destination: string): Promise<void> {

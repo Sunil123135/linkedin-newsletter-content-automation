@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises"
+import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
@@ -138,9 +138,10 @@ describe("FileSystemPublishAttemptStore", () => {
       artifactRoot,
       () => new Date("2026-08-03T10:00:00.000Z"),
       async (attemptDirectory) => {
+        if (attemptDirectory !== path.join(artifactRoot, ".publish-attempts")) return
         const recordFile = (await readdir(attemptDirectory))
           .find((file) => file.endsWith(".json"))
-        if (!recordFile) throw new Error("Directory sync happened before record creation")
+        if (!recordFile) return
         const record = JSON.parse(
           await readFile(path.join(attemptDirectory, recordFile), "utf8"),
         ) as { state?: unknown }
@@ -152,6 +153,44 @@ describe("FileSystemPublishAttemptStore", () => {
     await store.transition(identity, "started", uploadedRecord(begun.record.startedAt))
 
     expect(syncedStates).toEqual(["started", "document_uploaded"])
+  })
+
+  it("syncs a newly created attempt directory into its parent before record durability", async () => {
+    const artifactRoot = await mkdtemp(path.join(tmpdir(), "publish-attempt-parent-sync-"))
+    temporaryDirectories.push(artifactRoot)
+    const attemptDirectory = path.join(artifactRoot, ".publish-attempts")
+    const syncedDirectories: string[] = []
+    const syncDirectory = async (directory: string) => {
+      syncedDirectories.push(directory)
+      if (directory === artifactRoot) {
+        expect((await stat(attemptDirectory)).isDirectory()).toBe(true)
+      }
+    }
+    const store = new FileSystemPublishAttemptStore(
+      artifactRoot,
+      () => new Date("2026-08-03T10:00:00.000Z"),
+      syncDirectory,
+    )
+
+    await store.begin(identity)
+
+    expect(syncedDirectories.indexOf(artifactRoot)).toBeGreaterThanOrEqual(0)
+    expect(syncedDirectories.indexOf(artifactRoot))
+      .toBeLessThan(syncedDirectories.indexOf(attemptDirectory))
+
+    syncedDirectories.length = 0
+    const laterStore = new FileSystemPublishAttemptStore(
+      artifactRoot,
+      () => new Date("2026-08-03T10:00:01.000Z"),
+      syncDirectory,
+    )
+    await laterStore.begin({
+      ...identity,
+      runId: "later-run",
+      idempotencyKey: "13ef5b1d-fb4c-42c8-8c8a-ef07e5d510f7",
+    })
+
+    expect(syncedDirectories).toEqual([attemptDirectory])
   })
 })
 
