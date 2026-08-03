@@ -70,6 +70,8 @@ describe("AutomationDashboard", () => {
     const fetch = stubLinkedInConnection()
     renderDashboard("carousel")
 
+    fireEvent.click(screen.getByRole("button", { name: "LinkedIn Publisher node" }))
+    expect(screen.getByRole("region", { name: "LinkedIn Publisher details" })).toBeVisible()
     fireEvent.click(screen.getByRole("button", { name: "Run Workflow" }))
     await act(async () => vi.runAllTimersAsync())
 

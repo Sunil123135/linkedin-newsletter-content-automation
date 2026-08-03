@@ -176,6 +176,9 @@ describe("LinkedInPublisherPanel", () => {
       "href",
       "https://www.linkedin.com/feed/update/urn:li:share:post-789",
     )
+    const successStatus = screen.getByRole("status", { name: "LinkedIn publish status" })
+    expect(successStatus).toHaveTextContent("Published successfully")
+    expect(successStatus).toHaveFocus()
     await waitFor(() => expect(panelProps.onStateChange).toHaveBeenLastCalledWith("published"))
   })
 

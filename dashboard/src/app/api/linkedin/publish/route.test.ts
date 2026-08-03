@@ -3,8 +3,9 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import type { LinkedInConfig } from "@/server/linkedin/config"
 import type { LinkedInCredential } from "@/server/linkedin/credential-store"
 import { LinkedInError, type LinkedInErrorCode } from "@/server/linkedin/errors"
+import { createPublishRoute } from "@/server/linkedin/publish-route"
 import type { ApprovedCarouselPublisher } from "@/server/linkedin/publisher"
-import { POST, createPublishRoute } from "./route"
+import { POST } from "./route"
 
 const body = {
   runId: "run-123",

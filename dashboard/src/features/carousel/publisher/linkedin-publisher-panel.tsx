@@ -48,6 +48,7 @@ export function LinkedInPublisherPanel({
   const [rateLimitExpired, setRateLimitExpired] = useState(false)
   const mounted = useRef(true)
   const currentIdentity = useRef(executionIdentity)
+  const successStatus = useRef<HTMLDivElement>(null)
 
   useLayoutEffect(() => {
     currentIdentity.current = executionIdentity
@@ -111,6 +112,10 @@ export function LinkedInPublisherPanel({
   useEffect(() => {
     onConnectionPresentationChange?.(connectionPresentationFor(connection))
   }, [connection, onConnectionPresentationChange])
+
+  useEffect(() => {
+    if (scopedPostUrl) successStatus.current?.focus()
+  }, [scopedPostUrl])
 
   function startOAuth() {
     window.location.assign("/api/linkedin/oauth/start")
@@ -198,7 +203,7 @@ export function LinkedInPublisherPanel({
         ) : null}
 
         {scopedFailure?.code === "UNKNOWN_OUTCOME" ? (
-          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm" role="alert">
+          <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm text-foreground" role="alert">
             We could not confirm whether LinkedIn created the post. Check LinkedIn before trying again.
           </div>
         ) : scopedFailure ? (
@@ -207,16 +212,28 @@ export function LinkedInPublisherPanel({
           </div>
         ) : null}
 
-        {scopedPostUrl ? (
-          <a
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-primary underline-offset-4 hover:underline"
-            href={scopedPostUrl}
-            target="_blank"
-            rel="noreferrer"
-          >
-            View LinkedIn post <ExternalLinkIcon className="size-3.5" />
-          </a>
-        ) : null}
+        <div
+          ref={successStatus}
+          className="outline-none focus-visible:rounded-md focus-visible:ring-2 focus-visible:ring-ring/50"
+          role="status"
+          aria-label="LinkedIn publish status"
+          aria-live="polite"
+          tabIndex={-1}
+        >
+          {scopedPostUrl ? (
+            <p className="text-sm">
+              <span className="font-medium">Published successfully.</span>{" "}
+              <a
+                className="inline-flex items-center gap-1.5 font-medium text-primary underline-offset-4 hover:underline"
+                href={scopedPostUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                View LinkedIn post <ExternalLinkIcon className="size-3.5" />
+              </a>
+            </p>
+          ) : null}
+        </div>
 
         {action === "connect" || action === "reconnect" ? (
           <Button type="button" disabled={publishing} onClick={startOAuth}>
