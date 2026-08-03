@@ -5,7 +5,7 @@ import {
   type CryptoKey,
   type JWK,
 } from "jose"
-import { beforeAll, describe, expect, it } from "vitest"
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 import type { LinkedInConfig } from "./config"
 import {
   LINKEDIN_AUTHORIZATION_ENDPOINT,
@@ -41,6 +41,10 @@ beforeAll(async () => {
     kid: "fixture-key",
     use: "sig",
   }
+})
+
+afterEach(() => {
+  vi.useRealTimers()
 })
 
 describe("LinkedIn OAuth authorization", () => {
@@ -100,6 +104,8 @@ describe("LinkedIn OAuth token exchange", () => {
 
     expect(capturedUrl).toBe(LINKEDIN_TOKEN_ENDPOINT)
     expect(capturedInit?.method).toBe("POST")
+    expect(capturedInit?.redirect).toBe("manual")
+    expect(capturedInit?.signal).toBeInstanceOf(AbortSignal)
     const body = new URLSearchParams(capturedInit?.body?.toString())
     expect(Object.fromEntries(body)).toEqual({
       grant_type: "authorization_code",
@@ -114,6 +120,21 @@ describe("LinkedIn OAuth token exchange", () => {
       idToken: "signed-id-token",
       scope: "openid profile w_member_social",
     })
+  })
+
+  it("aborts token exchange at an explicit deadline", async () => {
+    vi.useFakeTimers()
+    const fetchFixture = (_input: string | URL | Request, init?: RequestInit) => (
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true })
+      })
+    )
+
+    const pending = exchangeAuthorizationCode("authorization-code", config, fetchFixture, 25)
+    const rejection = expect(pending).rejects.toMatchObject({ code: "LINKEDIN_UNAVAILABLE" })
+    await vi.advanceTimersByTimeAsync(25)
+
+    await rejection
   })
 
   it("does not expose a provider response body when token exchange fails", async () => {
@@ -143,6 +164,9 @@ describe("LinkedIn OIDC identity", () => {
       subject: "member-123",
       displayName: "Ada Lovelace",
     })
+    expect(fetchFixture.requestInits.every((init) => (
+      init.redirect === "manual" && init.signal instanceof AbortSignal
+    ))).toBe(true)
     await expect(verifyLinkedInIdToken(wrongIssuer, config, fetchFixture)).rejects.toThrow()
     await expect(verifyLinkedInIdToken(wrongAudience, config, fetchFixture)).rejects.toThrow()
     await expect(verifyLinkedInIdToken(expired, config, fetchFixture)).rejects.toThrow()
@@ -276,7 +300,9 @@ interface OidcFetchFixtureOptions {
 }
 
 function createOidcFetchFixture(options: OidcFetchFixtureOptions = {}) {
-  return async (input: string | URL | Request) => {
+  const requestInits: RequestInit[] = []
+  const fixture = async (input: string | URL | Request, init?: RequestInit) => {
+    requestInits.push(init ?? {})
     const url = input.toString()
     options.requestedUrls?.push(url)
     if (url === LINKEDIN_DISCOVERY_ENDPOINT) {
@@ -295,4 +321,5 @@ function createOidcFetchFixture(options: OidcFetchFixtureOptions = {}) {
     }
     throw new Error(`Unexpected network request: ${url}`)
   }
+  return Object.assign(fixture, { requestInits })
 }

@@ -23,6 +23,8 @@ describe("LinkedInClient", () => {
     expect(fetch).toHaveBeenCalledWith(initializeUrl, {
       method: "POST",
       headers: restJsonHeaders(),
+      redirect: "manual",
+      signal: expect.any(Object),
       body: JSON.stringify({
         initializeUploadRequest: {
           owner: author,
@@ -44,6 +46,8 @@ describe("LinkedInClient", () => {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/pdf",
       },
+      redirect: "manual",
+      signal: expect.any(Object),
       body: pdf,
     })
   })
@@ -65,6 +69,8 @@ describe("LinkedInClient", () => {
     expect(fetch).toHaveBeenCalledWith(postsUrl, {
       method: "POST",
       headers: restJsonHeaders(),
+      redirect: "manual",
+      signal: expect.any(Object),
       body: JSON.stringify({
         author,
         commentary: "Practical ways to build better systems.",
@@ -124,6 +130,54 @@ describe("LinkedInClient", () => {
     }))
     expect(fetch.mock.calls[0]?.[1]?.headers).not.toHaveProperty("LinkedIn-Version")
     expect(fetch.mock.calls[0]?.[1]?.headers).not.toHaveProperty("X-Restli-Protocol-Version")
+  })
+
+  it.each([
+    "http://www.linkedin.com/dms-uploads/document",
+    "https://user:password@www.linkedin.com/dms-uploads/document",
+    "https://www.linkedin.com:444/dms-uploads/document",
+    "https://www.linkedin.com/dms-uploads/document#fragment",
+    "https://www.linkedin.com.attacker.example/dms-uploads/document",
+    "https://api.linkedin.com/dms-uploads/document",
+    "https://www.linkedin.com/not-dms-uploads/document",
+  ])("rejects an untrusted document upload URL before sending Authorization: %s", async (untrustedUrl) => {
+    const fetch = fetchFixture(new Response(null, { status: 201 }))
+    const client = createClient(fetch)
+
+    await expect(client.uploadDocument(untrustedUrl, new Uint8Array([1])))
+      .rejects.toMatchObject({ code: "INVALID_UPSTREAM_RESPONSE" })
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it("rejects an upload redirect without forwarding Authorization", async () => {
+    const fetch = fetchFixture(new Response(null, {
+      status: 307,
+      headers: { location: "https://attacker.example/collect" },
+    }))
+    const client = createClient(fetch)
+
+    await expect(client.uploadDocument(uploadUrl, new Uint8Array([1])))
+      .rejects.toMatchObject({ code: "INVALID_UPSTREAM_RESPONSE" })
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(fetch.mock.calls[0]?.[1]).toMatchObject({ redirect: "manual" })
+  })
+
+  it("aborts a provider request at the configured deadline", async () => {
+    vi.useFakeTimers()
+    const fetch = vi.fn((_input: string | URL | Request, init?: RequestInit) => (
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true })
+      })
+    )) as unknown as ReturnType<typeof vi.fn> & typeof globalThis.fetch
+    const client = new LinkedInClient({ accessToken, apiVersion, fetch, timeoutMs: 25 })
+
+    const pending = client.initializeDocumentUpload({ owner: author })
+    const rejection = expect(pending).rejects.toMatchObject({ code: "LINKEDIN_UNAVAILABLE" })
+    await vi.advanceTimersByTimeAsync(25)
+
+    await rejection
+    expect(fetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(true)
+    vi.useRealTimers()
   })
 
   it("maps 401 to AUTH_REQUIRED", async () => {

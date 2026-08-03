@@ -11,6 +11,10 @@ import {
 import { z } from "zod"
 import type { LinkedInConfig } from "./config"
 import { LinkedInError } from "./errors"
+import {
+  fetchLinkedInProvider,
+  LINKEDIN_PROVIDER_TIMEOUT_MS,
+} from "./provider-fetch"
 
 export const LINKEDIN_AUTHORIZATION_ENDPOINT = "https://www.linkedin.com/oauth/v2/authorization"
 export const LINKEDIN_TOKEN_ENDPOINT = "https://www.linkedin.com/oauth/v2/accessToken"
@@ -125,6 +129,7 @@ export async function exchangeAuthorizationCode(
   code: string,
   config: LinkedInConfig,
   fetchImplementation: FetchImplementation = fetch,
+  timeoutMs = LINKEDIN_PROVIDER_TIMEOUT_MS,
 ): Promise<LinkedInTokens> {
   const body = new URLSearchParams({
     grant_type: "authorization_code",
@@ -136,12 +141,12 @@ export async function exchangeAuthorizationCode(
 
   let response: Response
   try {
-    response = await fetchImplementation(LINKEDIN_TOKEN_ENDPOINT, {
+    response = await fetchLinkedInProvider(fetchImplementation, LINKEDIN_TOKEN_ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
       cache: "no-store",
-    })
+    }, timeoutMs)
   } catch (error) {
     throw authorizationFailure(error)
   }
@@ -168,10 +173,16 @@ export async function verifyLinkedInIdToken(
   config: LinkedInConfig,
   fetchImplementation: FetchImplementation = fetch,
   currentDate: Date = new Date(),
+  timeoutMs = LINKEDIN_PROVIDER_TIMEOUT_MS,
 ): Promise<VerifiedLinkedInIdentity> {
-  const metadata = await loadDiscoveryMetadata(fetchImplementation)
+  const metadata = await loadDiscoveryMetadata(fetchImplementation, timeoutMs)
   const jwks = createRemoteJWKSet(new URL(LINKEDIN_JWKS_ENDPOINT), {
-    [customFetch]: (url, options) => fetchImplementation(url, options),
+    [customFetch]: (url, options) => fetchLinkedInProvider(
+      fetchImplementation,
+      url,
+      options,
+      timeoutMs,
+    ),
   })
   const { payload } = await jwtVerify(idToken, jwks, {
     issuer: metadata.issuer,
@@ -194,10 +205,18 @@ export async function verifyLinkedInIdToken(
   }
 }
 
-async function loadDiscoveryMetadata(fetchImplementation: FetchImplementation) {
+async function loadDiscoveryMetadata(
+  fetchImplementation: FetchImplementation,
+  timeoutMs: number,
+) {
   let response: Response
   try {
-    response = await fetchImplementation(LINKEDIN_DISCOVERY_ENDPOINT, { cache: "no-store" })
+    response = await fetchLinkedInProvider(
+      fetchImplementation,
+      LINKEDIN_DISCOVERY_ENDPOINT,
+      { cache: "no-store" },
+      timeoutMs,
+    )
   } catch (error) {
     throw authorizationFailure(error)
   }

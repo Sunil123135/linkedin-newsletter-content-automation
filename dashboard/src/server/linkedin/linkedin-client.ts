@@ -1,5 +1,9 @@
 import { z } from "zod"
 import { LinkedInError } from "./errors"
+import {
+  fetchLinkedInProvider,
+  LINKEDIN_PROVIDER_TIMEOUT_MS,
+} from "./provider-fetch"
 
 const initializedDocumentSchema = z.object({
   value: z.object({
@@ -12,6 +16,7 @@ export interface LinkedInClientOptions {
   accessToken: string
   apiVersion: string
   fetch: typeof globalThis.fetch
+  timeoutMs?: number
 }
 
 export interface InitializeDocumentInput {
@@ -57,6 +62,7 @@ export class LinkedInClient {
     )
 
     const parsed = await this.parseInitializedDocument(response)
+    requireTrustedUploadUrl(parsed.value.uploadUrl)
     return {
       documentUrn: parsed.value.document,
       uploadUrl: parsed.value.uploadUrl,
@@ -64,6 +70,7 @@ export class LinkedInClient {
   }
 
   async uploadDocument(uploadUrl: string, pdf: Uint8Array): Promise<void> {
+    requireTrustedUploadUrl(uploadUrl)
     await this.request(uploadUrl, {
       method: "PUT",
       headers: {
@@ -78,7 +85,7 @@ export class LinkedInClient {
   async createDocumentPost(input: CreateDocumentPostInput): Promise<{ postUrn: string }> {
     let response: Response
     try {
-      response = await this.options.fetch("https://api.linkedin.com/rest/posts", {
+      response = await this.providerFetch("https://api.linkedin.com/rest/posts", {
         method: "POST",
         headers: this.restJsonHeaders,
         body: JSON.stringify({
@@ -121,7 +128,7 @@ export class LinkedInClient {
   private async request(url: string, init: RequestInit): Promise<Response> {
     let response: Response
     try {
-      response = await this.options.fetch(url, init)
+      response = await this.providerFetch(url, init)
     } catch (cause) {
       throw unavailableFailure(cause)
     }
@@ -149,6 +156,9 @@ export class LinkedInClient {
         { retryAfterSeconds: parseRetryAfterSeconds(response.headers.get("Retry-After")) },
       )
     }
+    if (response.status >= 300 && response.status <= 399) {
+      throw invalidUpstreamFailure()
+    }
     if (response.status >= 500 && response.status <= 599) {
       throw unavailableFailure()
     }
@@ -171,6 +181,37 @@ export class LinkedInClient {
       throw invalidUpstreamFailure(cause)
     }
   }
+
+  private providerFetch(input: string | URL | Request, init: RequestInit): Promise<Response> {
+    return fetchLinkedInProvider(
+      this.options.fetch,
+      input,
+      init,
+      this.options.timeoutMs ?? LINKEDIN_PROVIDER_TIMEOUT_MS,
+    )
+  }
+}
+
+export function requireTrustedUploadUrl(rawUrl: string): URL {
+  const authority = /^https:\/\/([^/]+)\//i.exec(rawUrl)?.[1]
+  let url: URL
+  try {
+    url = new URL(rawUrl)
+  } catch (cause) {
+    throw invalidUpstreamFailure(cause)
+  }
+
+  if (authority !== "www.linkedin.com"
+    || url.protocol !== "https:"
+    || url.hostname !== "www.linkedin.com"
+    || url.port !== ""
+    || url.username !== ""
+    || url.password !== ""
+    || url.hash !== ""
+    || !url.pathname.startsWith("/dms-uploads/")) {
+    throw invalidUpstreamFailure()
+  }
+  return url
 }
 
 function unavailableFailure(cause?: unknown): LinkedInError {
