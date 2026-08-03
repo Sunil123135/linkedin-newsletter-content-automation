@@ -1,10 +1,14 @@
 import { createHash } from "node:crypto"
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { tmpdir } from "node:os"
 import { deflateSync } from "node:zlib"
 import { afterEach, describe, expect, it } from "vitest"
-import { FileSystemCarouselArtifactStore } from "./artifact-store"
+import {
+  FileSystemCarouselArtifactStore,
+  MAX_CAROUSEL_MANIFEST_BYTES,
+  MAX_CAROUSEL_SLIDE_BYTES,
+} from "./artifact-store"
 
 const temporaryDirectories: string[] = []
 
@@ -117,6 +121,71 @@ describe("FileSystemCarouselArtifactStore", () => {
 
     expect(loaded.run.caption).toBe("A practical lesson from the field.")
     expect(loaded.run.documentTitle).toBe("Reliable carousels")
+  })
+
+  it("rejects a manifest before reading beyond its size limit", async () => {
+    const fixture = await createApprovedRunFixture()
+    const manifestPath = path.join(fixture.artifactRoot, fixture.requestedRunId, "manifest.json")
+    await writeFile(manifestPath, Buffer.alloc(MAX_CAROUSEL_MANIFEST_BYTES + 1, 0x20))
+
+    await expect(new FileSystemCarouselArtifactStore(fixture.artifactRoot)
+      .loadApprovedRun(fixture.requestedRunId, fixture.run.revision))
+      .rejects.toMatchObject({ code: "INVALID_MANIFEST" })
+  })
+
+  it("rejects a slide before reading beyond its per-file size limit", async () => {
+    const fixture = await createApprovedRunFixture()
+    const bytes = Buffer.alloc(MAX_CAROUSEL_SLIDE_BYTES + 1, 0x61)
+    const slide = fixture.run.slides[0]
+    slide.checksum = createHash("sha256").update(bytes).digest("hex")
+    await writeFile(path.join(fixture.artifactRoot, slide.storageKey), bytes)
+    await writeFile(
+      path.join(fixture.artifactRoot, fixture.requestedRunId, "manifest.json"),
+      JSON.stringify(fixture.run),
+    )
+
+    await expect(new FileSystemCarouselArtifactStore(fixture.artifactRoot)
+      .loadApprovedRun(fixture.requestedRunId, fixture.run.revision))
+      .rejects.toMatchObject({ code: "ASSET_TOO_LARGE" })
+  })
+
+  it("rejects a non-regular slide without reading it", async () => {
+    const fixture = await createApprovedRunFixture()
+    const slidePath = path.join(fixture.artifactRoot, fixture.run.slides[0].storageKey)
+    await rm(slidePath)
+    await mkdir(slidePath)
+
+    await expect(new FileSystemCarouselArtifactStore(fixture.artifactRoot)
+      .loadApprovedRun(fixture.requestedRunId, fixture.run.revision))
+      .rejects.toMatchObject({ code: "INVALID_ASSET_PATH" })
+  })
+
+  it("rejects a run-directory junction that redirects outside the artifact root", async () => {
+    const fixture = await createApprovedRunFixture()
+    const runDirectory = path.join(fixture.artifactRoot, fixture.requestedRunId)
+    const outsideRun = path.join(fixture.temporaryDirectory, "outside-run")
+    await mkdir(outsideRun)
+    await writeFile(path.join(outsideRun, "manifest.json"), JSON.stringify(fixture.run))
+    await rm(runDirectory, { recursive: true })
+    await symlink(outsideRun, runDirectory, process.platform === "win32" ? "junction" : "dir")
+
+    await expect(new FileSystemCarouselArtifactStore(fixture.artifactRoot)
+      .loadApprovedRun(fixture.requestedRunId, fixture.run.revision))
+      .rejects.toMatchObject({ code: "INVALID_ASSET_PATH" })
+  })
+
+  it("rejects a nested slides junction even when its storage key is lexically contained", async () => {
+    const fixture = await createApprovedRunFixture()
+    const slidesDirectory = path.join(fixture.artifactRoot, fixture.requestedRunId, "slides")
+    const outsideSlides = path.join(fixture.temporaryDirectory, "outside-slides")
+    await mkdir(outsideSlides)
+    await writeFile(path.join(outsideSlides, "01.png"), fixture.slideBytes[0])
+    await rm(slidesDirectory, { recursive: true })
+    await symlink(outsideSlides, slidesDirectory, process.platform === "win32" ? "junction" : "dir")
+
+    await expect(new FileSystemCarouselArtifactStore(fixture.artifactRoot)
+      .loadApprovedRun(fixture.requestedRunId, fixture.run.revision))
+      .rejects.toMatchObject({ code: "INVALID_ASSET_PATH" })
   })
 })
 
