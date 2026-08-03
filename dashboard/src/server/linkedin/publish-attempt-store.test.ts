@@ -3,6 +3,7 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import {
+  DEFAULT_STALE_PUBLISH_ATTEMPT_MS,
   FileSystemPublishAttemptStore,
   PublishAttemptConflictError,
   type PublishAttemptIdentity,
@@ -71,9 +72,12 @@ describe("FileSystemPublishAttemptStore", () => {
   it("replays a published result for the same key and rejects a different key", async () => {
     const store = await createStore()
     const begun = await store.begin(identity)
-    const published = publishedRecord(begun.record.startedAt)
-    await store.transition(identity, "started", uploadedRecord(begun.record.startedAt))
-    await store.transition(identity, "document_uploaded", published)
+    const uploaded = uploadedRecord(begun.record.startedAt)
+    const dispatching = dispatchingRecord(uploaded)
+    const published = publishedRecord(dispatching)
+    await store.transition(identity, "started", uploaded)
+    await store.transition(identity, "document_uploaded", dispatching)
+    await store.transition(identity, "post_dispatching", published)
 
     await expect(store.begin(identity)).resolves.toEqual({ kind: "replay", record: published })
     await expect(store.begin({
@@ -87,12 +91,13 @@ describe("FileSystemPublishAttemptStore", () => {
     const begun = await store.begin(identity)
     const uploaded = uploadedRecord(begun.record.startedAt)
     const unknown: PublishAttemptRecord = {
-      ...uploaded,
+      ...dispatchingRecord(uploaded),
       state: "unknown",
       failedAt: "2026-08-03T10:00:02.000Z",
     }
     await store.transition(identity, "started", uploaded)
-    await store.transition(identity, "document_uploaded", unknown)
+    await store.transition(identity, "document_uploaded", dispatchingRecord(uploaded))
+    await store.transition(identity, "post_dispatching", unknown)
 
     await expect(store.begin(identity)).resolves.toEqual({ kind: "unknown", record: unknown })
   })
@@ -192,6 +197,79 @@ describe("FileSystemPublishAttemptStore", () => {
 
     expect(syncedDirectories).toEqual([attemptDirectory])
   })
+
+  it("reconciles a stale pre-upload process death as provably retry-safe", async () => {
+    const { store, artifactRoot } = await createStoreWithRoot()
+    await store.begin(identity)
+    const restarted = new FileSystemPublishAttemptStore(
+      artifactRoot,
+      () => new Date("2026-08-03T10:10:00.000Z"),
+    )
+
+    await expect(restarted.getScopeStatus(identity)).resolves.toEqual({ state: "retry_safe" })
+    await expect(restarted.begin(identity)).resolves.toMatchObject({
+      kind: "begun",
+      record: { state: "started" },
+    })
+  })
+
+  it("reconciles a stale uploaded document as retry-safe because Posts dispatch was not armed", async () => {
+    const { store, artifactRoot } = await createStoreWithRoot()
+    const begun = await store.begin(identity)
+    await store.transition(identity, "started", uploadedRecord(begun.record.startedAt))
+    const restarted = new FileSystemPublishAttemptStore(
+      artifactRoot,
+      () => new Date("2026-08-03T10:10:00.000Z"),
+    )
+
+    await expect(restarted.getScopeStatus(identity)).resolves.toEqual({ state: "retry_safe" })
+  })
+
+  it("reconciles a stale post-dispatch barrier as unknown and blocks retry", async () => {
+    const { store, artifactRoot } = await createStoreWithRoot()
+    const begun = await store.begin(identity)
+    const uploaded = uploadedRecord(begun.record.startedAt)
+    await store.transition(identity, "started", uploaded)
+    await store.transition(identity, "document_uploaded", dispatchingRecord(uploaded))
+    const restarted = new FileSystemPublishAttemptStore(
+      artifactRoot,
+      () => new Date("2026-08-03T10:10:00.000Z"),
+    )
+
+    await expect(restarted.getScopeStatus(identity)).resolves.toEqual({ state: "unknown" })
+    await expect(restarted.begin(identity)).resolves.toMatchObject({ kind: "unknown" })
+  })
+
+  it("keeps a recent pre-Posts attempt in progress until the explicit stale deadline", async () => {
+    const { store, artifactRoot } = await createStoreWithRoot()
+    await store.begin(identity)
+    const beforeDeadline = new FileSystemPublishAttemptStore(
+      artifactRoot,
+      () => new Date(Date.parse("2026-08-03T10:00:00.000Z") + DEFAULT_STALE_PUBLISH_ATTEMPT_MS - 1),
+    )
+
+    await expect(beforeDeadline.getScopeStatus(identity)).resolves.toEqual({ state: "in_progress" })
+  })
+
+  it("returns a safe published scope status without attempt identity or provider URNs", async () => {
+    const store = await createStore()
+    const begun = await store.begin(identity)
+    const uploaded = uploadedRecord(begun.record.startedAt)
+    const dispatching = dispatchingRecord(uploaded)
+    const published = publishedRecord(dispatching)
+    await store.transition(identity, "started", uploaded)
+    await store.transition(identity, "document_uploaded", dispatching)
+    await store.transition(identity, "post_dispatching", published)
+
+    const status = await store.getScopeStatus(identity)
+
+    expect(status).toEqual({
+      state: "published",
+      postUrl: "https://www.linkedin.com/feed/update/urn:li:share:post-789",
+      publishedAt: "2026-08-03T10:00:01.000Z",
+    })
+    expect(JSON.stringify(status)).not.toMatch(/idempotencyKey|postUrn|documentUrn|pdfSha256/)
+  })
 })
 
 async function createStore() {
@@ -222,11 +300,21 @@ function uploadedRecord(
   }
 }
 
+function dispatchingRecord(
+  uploaded: Extract<PublishAttemptRecord, { state: "document_uploaded" }>,
+): Extract<PublishAttemptRecord, { state: "post_dispatching" }> {
+  return {
+    ...uploaded,
+    state: "post_dispatching",
+    dispatchStartedAt: "2026-08-03T10:00:00.500Z",
+  }
+}
+
 function publishedRecord(
-  startedAt: string,
+  dispatching: Extract<PublishAttemptRecord, { state: "post_dispatching" }>,
 ): Extract<PublishAttemptRecord, { state: "published" }> {
   return {
-    ...uploadedRecord(startedAt),
+    ...dispatching,
     state: "published",
     postUrn: "urn:li:share:post-789",
     postUrl: "https://www.linkedin.com/feed/update/urn:li:share:post-789",

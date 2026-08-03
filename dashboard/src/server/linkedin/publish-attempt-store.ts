@@ -14,6 +14,7 @@ import path from "node:path"
 export type PublishAttemptState =
   | "started"
   | "document_uploaded"
+  | "post_dispatching"
   | "published"
   | "failed_safe"
   | "unknown"
@@ -36,12 +37,23 @@ export interface DocumentUploadedPublishAttempt extends PublishAttemptBase {
   state: "document_uploaded"
   documentUrn: string
   pdfSha256: string
+  documentUploadedAt?: string
+}
+
+export interface PostDispatchingPublishAttempt extends PublishAttemptBase {
+  state: "post_dispatching"
+  documentUrn: string
+  pdfSha256: string
+  documentUploadedAt?: string
+  dispatchStartedAt: string
 }
 
 export interface PublishedPublishAttempt extends PublishAttemptBase {
   state: "published"
   documentUrn: string
   pdfSha256: string
+  documentUploadedAt?: string
+  dispatchStartedAt: string
   postUrn: string
   postUrl: string
   publishedAt: string
@@ -52,18 +64,23 @@ export interface FailedSafePublishAttempt extends PublishAttemptBase {
   failedAt: string
   documentUrn?: string
   pdfSha256?: string
+  documentUploadedAt?: string
+  dispatchStartedAt?: string
 }
 
 export interface UnknownPublishAttempt extends PublishAttemptBase {
   state: "unknown"
   documentUrn: string
   pdfSha256: string
+  documentUploadedAt?: string
+  dispatchStartedAt: string
   failedAt: string
 }
 
 export type PublishAttemptRecord =
   | StartedPublishAttempt
   | DocumentUploadedPublishAttempt
+  | PostDispatchingPublishAttempt
   | PublishedPublishAttempt
   | FailedSafePublishAttempt
   | UnknownPublishAttempt
@@ -72,7 +89,7 @@ export type BeginAttemptResult =
   | { kind: "begun"; record: StartedPublishAttempt }
   | { kind: "replay"; record: PublishedPublishAttempt }
   | { kind: "duplicate"; record: PublishedPublishAttempt }
-  | { kind: "in_progress"; record: StartedPublishAttempt | DocumentUploadedPublishAttempt }
+  | { kind: "in_progress"; record: StartedPublishAttempt | DocumentUploadedPublishAttempt | PostDispatchingPublishAttempt }
   | { kind: "unknown"; record: UnknownPublishAttempt }
 
 export interface PublishAttemptStore {
@@ -83,7 +100,17 @@ export interface PublishAttemptStore {
     next: PublishAttemptRecord,
   ): Promise<void>
   get(identity: PublishAttemptIdentity): Promise<PublishAttemptRecord | null>
+  getScopeStatus(scope: Pick<PublishAttemptIdentity, "runId" | "revision">): Promise<PublishScopeStatus>
 }
+
+export type PublishScopeStatus =
+  | { state: "idle" }
+  | { state: "in_progress" }
+  | { state: "retry_safe" }
+  | { state: "unknown" }
+  | { state: "published"; postUrl: string; publishedAt: string }
+
+export const DEFAULT_STALE_PUBLISH_ATTEMPT_MS = 5 * 60 * 1000
 
 export class PublishAttemptConflictError extends Error {
   constructor(message: string) {
@@ -100,6 +127,7 @@ export class FileSystemPublishAttemptStore implements PublishAttemptStore {
     artifactRoot = process.env.CAROUSEL_ARTIFACT_ROOT,
     private readonly now: () => Date = () => new Date(),
     private readonly syncDirectory: (directory: string) => Promise<void> = syncAttemptDirectory,
+    private readonly staleAttemptMs = DEFAULT_STALE_PUBLISH_ATTEMPT_MS,
   ) {
     if (!artifactRoot) {
       throw new Error("CAROUSEL_ARTIFACT_ROOT must be configured")
@@ -113,7 +141,9 @@ export class FileSystemPublishAttemptStore implements PublishAttemptStore {
     const scopeLock = await this.acquireLock(this.scopeLockPath(identity))
     try {
       const records = await this.readAllRecords()
-      const sameScope = records.filter((record) => sameRunRevision(record, identity))
+      const sameScope = await this.reconcileScope(
+        records.filter((record) => sameRunRevision(record, identity)),
+      )
       const existing = sameScope.find((record) => sameIdentity(record, identity))
 
       const published = sameScope.find(
@@ -131,8 +161,10 @@ export class FileSystemPublishAttemptStore implements PublishAttemptStore {
       if (unknown) return { kind: "unknown", record: unknown }
 
       const inProgress = sameScope.find(
-        (record): record is StartedPublishAttempt | DocumentUploadedPublishAttempt => (
-          record.state === "started" || record.state === "document_uploaded"
+        (record): record is StartedPublishAttempt | DocumentUploadedPublishAttempt | PostDispatchingPublishAttempt => (
+          record.state === "started"
+          || record.state === "document_uploaded"
+          || record.state === "post_dispatching"
         ),
       )
       if (inProgress) return { kind: "in_progress", record: inProgress }
@@ -167,12 +199,17 @@ export class FileSystemPublishAttemptStore implements PublishAttemptStore {
       throw new PublishAttemptConflictError(`Invalid publish transition from ${expected} to ${next.state}`)
     }
 
-    const lockPath = this.attemptLockPath(identity)
-    const lock = await this.acquireLock(lockPath)
+    await this.ensureAttemptDirectory()
+    const scopeLockPath = this.scopeLockPath(identity)
+    const scopeLock = await this.acquireLock(scopeLockPath)
+    const attemptLockPath = this.attemptLockPath(identity)
+    let attemptLock: FileHandle | undefined
     try {
+      attemptLock = await this.acquireLock(attemptLockPath)
       await this.replaceExpected(identity, expected, next)
     } finally {
-      await this.releaseLock(lock, lockPath)
+      if (attemptLock) await this.releaseLock(attemptLock, attemptLockPath)
+      await this.releaseLock(scopeLock, scopeLockPath)
     }
   }
 
@@ -183,6 +220,85 @@ export class FileSystemPublishAttemptStore implements PublishAttemptStore {
       if (isFileSystemError(error, "ENOENT")) return null
       throw error
     }
+  }
+
+  async getScopeStatus(
+    scope: Pick<PublishAttemptIdentity, "runId" | "revision">,
+  ): Promise<PublishScopeStatus> {
+    await this.ensureAttemptDirectory()
+    const lockPath = this.scopeLockPath(scope)
+    const lock = await this.acquireLock(lockPath)
+    try {
+      const records = await this.reconcileScope(
+        (await this.readAllRecords()).filter((record) => sameRunRevision(record, scope)),
+      )
+      const published = records.find(
+        (record): record is PublishedPublishAttempt => record.state === "published",
+      )
+      if (published) {
+        return {
+          state: "published",
+          postUrl: published.postUrl,
+          publishedAt: published.publishedAt,
+        }
+      }
+      if (records.some((record) => record.state === "unknown")) return { state: "unknown" }
+      if (records.some((record) => (
+        record.state === "started"
+        || record.state === "document_uploaded"
+        || record.state === "post_dispatching"
+      ))) return { state: "in_progress" }
+      if (records.some((record) => record.state === "failed_safe")) return { state: "retry_safe" }
+      return { state: "idle" }
+    } finally {
+      await this.releaseLock(lock, lockPath)
+    }
+  }
+
+  private async reconcileScope(records: PublishAttemptRecord[]): Promise<PublishAttemptRecord[]> {
+    const reconciled: PublishAttemptRecord[] = []
+    for (const record of records) {
+      if (!this.isStale(record)) {
+        reconciled.push(record)
+        continue
+      }
+      if (record.state === "started" || record.state === "document_uploaded") {
+        const failedSafe: FailedSafePublishAttempt = {
+          ...record,
+          state: "failed_safe",
+          failedAt: this.now().toISOString(),
+        }
+        await this.replaceExpected(record, record.state, failedSafe)
+        reconciled.push(failedSafe)
+        continue
+      }
+      if (record.state === "post_dispatching") {
+        const unknown: UnknownPublishAttempt = {
+          ...record,
+          state: "unknown",
+          failedAt: this.now().toISOString(),
+        }
+        await this.replaceExpected(record, "post_dispatching", unknown)
+        reconciled.push(unknown)
+        continue
+      }
+      reconciled.push(record)
+    }
+    return reconciled
+  }
+
+  private isStale(record: PublishAttemptRecord): boolean {
+    if (record.state !== "started"
+      && record.state !== "document_uploaded"
+      && record.state !== "post_dispatching") return false
+    const phaseTimestamp = record.state === "post_dispatching"
+      ? record.dispatchStartedAt
+      : record.state === "document_uploaded"
+        ? record.documentUploadedAt ?? record.startedAt
+        : record.startedAt
+    const phaseTime = Date.parse(phaseTimestamp)
+    return Number.isFinite(phaseTime)
+      && this.now().getTime() - phaseTime >= this.staleAttemptMs
   }
 
   private async replaceExpected(
@@ -266,7 +382,7 @@ export class FileSystemPublishAttemptStore implements PublishAttemptStore {
       try {
         return await open(lockPath, "wx", 0o600)
       } catch (error) {
-        if (!isFileSystemError(error, "EEXIST")) throw error
+        if (!isRetryableLockContention(error)) throw error
         await delay(5)
       }
     }
@@ -286,7 +402,7 @@ export class FileSystemPublishAttemptStore implements PublishAttemptStore {
     return path.join(this.attemptDirectory, `${identityHash(identity)}.lock`)
   }
 
-  private scopeLockPath(identity: PublishAttemptIdentity): string {
+  private scopeLockPath(identity: Pick<PublishAttemptIdentity, "runId" | "revision">): string {
     return path.join(this.attemptDirectory, `${scopeHash(identity)}.scope.lock`)
   }
 
@@ -324,6 +440,9 @@ function sameIdentity(
 function isAllowedTransition(expected: PublishAttemptState, next: PublishAttemptState): boolean {
   return (expected === "started" && (next === "document_uploaded" || next === "failed_safe"))
     || (expected === "document_uploaded" && (
+      next === "post_dispatching" || next === "failed_safe"
+    ))
+    || (expected === "post_dispatching" && (
       next === "published" || next === "failed_safe" || next === "unknown"
     ))
 }
@@ -356,13 +475,22 @@ function parseRecord(contents: string): PublishAttemptRecord {
     throw new Error("Invalid uploaded-document publish attempt")
   }
   if (value.state === "document_uploaded") return value as unknown as DocumentUploadedPublishAttempt
+  if (value.state === "post_dispatching") {
+    if (typeof value.dispatchStartedAt !== "string") {
+      throw new Error("Invalid post-dispatching publish attempt")
+    }
+    return value as unknown as PostDispatchingPublishAttempt
+  }
   if (value.state === "unknown") {
-    if (typeof value.failedAt !== "string") throw new Error("Invalid unknown publish attempt")
+    if (typeof value.failedAt !== "string" || typeof value.dispatchStartedAt !== "string") {
+      throw new Error("Invalid unknown publish attempt")
+    }
     return value as unknown as UnknownPublishAttempt
   }
   if (typeof value.postUrn !== "string"
     || typeof value.postUrl !== "string"
-    || typeof value.publishedAt !== "string") {
+    || typeof value.publishedAt !== "string"
+    || typeof value.dispatchStartedAt !== "string") {
     throw new Error("Invalid published attempt")
   }
   return value as unknown as PublishedPublishAttempt
@@ -371,6 +499,7 @@ function parseRecord(contents: string): PublishAttemptRecord {
 function isPublishAttemptState(value: unknown): value is PublishAttemptState {
   return value === "started"
     || value === "document_uploaded"
+    || value === "post_dispatching"
     || value === "published"
     || value === "failed_safe"
     || value === "unknown"
@@ -382,6 +511,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isFileSystemError(error: unknown, code: string): error is NodeJS.ErrnoException {
   return isRecord(error) && error.code === code
+}
+
+function isRetryableLockContention(error: unknown): boolean {
+  return isFileSystemError(error, "EEXIST")
+    || (process.platform === "win32" && (
+      isFileSystemError(error, "EPERM") || isFileSystemError(error, "EACCES")
+    ))
 }
 
 function delay(milliseconds: number): Promise<void> {

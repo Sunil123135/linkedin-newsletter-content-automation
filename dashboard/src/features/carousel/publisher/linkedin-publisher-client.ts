@@ -13,6 +13,13 @@ export interface LinkedInPublishResult {
   publishedAt: string
 }
 
+export type LinkedInPublishStatus =
+  | { state: "idle" }
+  | { state: "in_progress" }
+  | { state: "retry_safe" }
+  | { state: "unknown" }
+  | { state: "published"; postUrl: string; publishedAt: string }
+
 export interface LinkedInPublisherPreflightPage {
   index: 1 | 2 | 3 | 4 | 5
   altText: string
@@ -85,6 +92,21 @@ export async function getLinkedInPublisherPreflight(
   const body = await safeJson(response)
   if (!response.ok) throw toApiError(response.status, body)
   return parsePreflight(body, runId, revision, response.status)
+}
+
+export async function getLinkedInPublishStatus(
+  runId: string,
+  revision: number,
+  fetch: PublisherFetch = globalThis.fetch,
+): Promise<LinkedInPublishStatus> {
+  const query = new URLSearchParams({ runId, revision: String(revision) })
+  const response = await fetch(`/api/linkedin/publish/status?${query}`, {
+    credentials: "same-origin",
+    headers: { accept: "application/json" },
+  })
+  const body = await safeJson(response)
+  if (!response.ok) throw toApiError(response.status, body)
+  return parsePublishStatus(body, response.status)
 }
 
 export async function publishCarousel(
@@ -189,6 +211,30 @@ function parsePreflight(
   }
 }
 
+function parsePublishStatus(body: unknown, status: number): LinkedInPublishStatus {
+  if (!isRecord(body) || typeof body.state !== "string") throw invalidStatus(status)
+  if (body.state === "idle"
+    || body.state === "in_progress"
+    || body.state === "retry_safe"
+    || body.state === "unknown") {
+    if (!hasExactKeys(body, ["state"])) throw invalidStatus(status)
+    return { state: body.state }
+  }
+  if (body.state !== "published"
+    || !hasExactKeys(body, ["state", "postUrl", "publishedAt"])
+    || typeof body.postUrl !== "string"
+    || !isSafeLinkedInPostUrl(body.postUrl)
+    || typeof body.publishedAt !== "string"
+    || !Number.isFinite(Date.parse(body.publishedAt))) {
+    throw invalidStatus(status)
+  }
+  return {
+    state: "published",
+    postUrl: body.postUrl,
+    publishedAt: body.publishedAt,
+  }
+}
+
 function parsePreflightPage(
   value: unknown,
   expectedIndex: number,
@@ -234,6 +280,30 @@ function invalidPreflight(status: number): LinkedInPublisherApiError {
     "INVALID_UPSTREAM_RESPONSE",
     "The approved carousel preflight response was invalid.",
   )
+}
+
+function invalidStatus(status: number): LinkedInPublisherApiError {
+  return new LinkedInPublisherApiError(
+    status,
+    "INVALID_UPSTREAM_RESPONSE",
+    "The LinkedIn publish status response was invalid.",
+  )
+}
+
+function isSafeLinkedInPostUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return url.protocol === "https:"
+      && url.hostname === "www.linkedin.com"
+      && url.username === ""
+      && url.password === ""
+      && url.port === ""
+      && url.pathname.startsWith("/feed/update/")
+      && url.search === ""
+      && url.hash === ""
+  } catch {
+    return false
+  }
 }
 
 function hasExactKeys(value: Record<string, unknown>, expected: string[]): boolean {

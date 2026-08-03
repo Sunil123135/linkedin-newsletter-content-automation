@@ -9,10 +9,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 
 import {
   getLinkedInConnection,
+  getLinkedInPublishStatus,
   getLinkedInPublisherPreflight,
   LinkedInPublisherApiError,
   publishCarousel,
   type LinkedInConnection,
+  type LinkedInPublishStatus,
   type LinkedInPublisherPreflight,
 } from "./linkedin-publisher-client"
 import { LinkedInPublishDialog } from "./linkedin-publish-dialog"
@@ -43,6 +45,9 @@ export function LinkedInPublisherPanel({
   const [preflight, setPreflight] = useState<LinkedInPublisherPreflight>()
   const [preflightIdentity, setPreflightIdentity] = useState<string | null>(null)
   const [preflightFailure, setPreflightFailure] = useState<LinkedInPublisherApiError>()
+  const [publishStatus, setPublishStatus] = useState<LinkedInPublishStatus>()
+  const [publishStatusIdentity, setPublishStatusIdentity] = useState<string | null>(null)
+  const [publishStatusFailure, setPublishStatusFailure] = useState<LinkedInPublisherApiError>()
   const [dialogIdentity, setDialogIdentity] = useState<string | null>(null)
   const [publishingIdentity, setPublishingIdentity] = useState<string | null>(null)
   const [outcomeIdentity, setOutcomeIdentity] = useState<string | null>(null)
@@ -79,6 +84,9 @@ export function LinkedInPublisherPanel({
         setPreflight(undefined)
         setPreflightIdentity(null)
         setPreflightFailure(undefined)
+        setPublishStatus(undefined)
+        setPublishStatusIdentity(null)
+        setPublishStatusFailure(undefined)
       })
       return
     }
@@ -87,6 +95,9 @@ export function LinkedInPublisherPanel({
     setPreflight(undefined)
     setPreflightIdentity(null)
     setPreflightFailure(undefined)
+    setPublishStatus(undefined)
+    setPublishStatusIdentity(null)
+    setPublishStatusFailure(undefined)
     void getLinkedInPublisherPreflight(runId, revision)
       .then((result) => {
         if (cancelled || !mounted.current || currentIdentity.current !== requestIdentity) return
@@ -97,6 +108,17 @@ export function LinkedInPublisherPanel({
         if (cancelled || !mounted.current || currentIdentity.current !== requestIdentity) return
         setPreflightFailure(toSafeApiError(error))
         setPreflightIdentity(requestIdentity)
+      })
+    void getLinkedInPublishStatus(runId, revision)
+      .then((result) => {
+        if (cancelled || !mounted.current || currentIdentity.current !== requestIdentity) return
+        setPublishStatus(result)
+        setPublishStatusIdentity(requestIdentity)
+      })
+      .catch((error) => {
+        if (cancelled || !mounted.current || currentIdentity.current !== requestIdentity) return
+        setPublishStatusFailure(toSafeApiError(error))
+        setPublishStatusIdentity(requestIdentity)
       })
     return () => {
       cancelled = true
@@ -123,8 +145,17 @@ export function LinkedInPublisherPanel({
   const scopedPreflightFailure = hasScopedIdentity && preflightIdentity === executionIdentity
     ? preflightFailure
     : undefined
+  const scopedPublishStatus = hasScopedIdentity && publishStatusIdentity === executionIdentity
+    ? publishStatus
+    : undefined
+  const scopedPublishStatusFailure = hasScopedIdentity && publishStatusIdentity === executionIdentity
+    ? publishStatusFailure
+    : undefined
   const scopedPostUrl = hasScopedIdentity && outcomeIdentity === executionIdentity ? postUrl : undefined
   const scopedFailure = hasScopedIdentity && outcomeIdentity === executionIdentity ? failure : undefined
+  const effectivePostUrl = scopedPostUrl ?? (
+    scopedPublishStatus?.state === "published" ? scopedPublishStatus.postUrl : undefined
+  )
   const publishing = hasScopedIdentity && publishingIdentity === executionIdentity
   const dialogOpen = hasScopedIdentity && dialogIdentity === executionIdentity
   const recovery = recoveryFor(scopedFailure)
@@ -143,8 +174,9 @@ export function LinkedInPublisherPanel({
     artifactReady,
     hasExecutionIdentity: executionIdentity !== null,
     publishing,
-    postUrl: scopedPostUrl,
-    failure: scopedFailure,
+    postUrl: effectivePostUrl,
+    publishStatus: scopedPublishStatus,
+    failure: scopedFailure ?? scopedPublishStatusFailure,
   })
 
   useEffect(() => {
@@ -156,8 +188,8 @@ export function LinkedInPublisherPanel({
   }, [connection, onConnectionPresentationChange])
 
   useEffect(() => {
-    if (scopedPostUrl) successStatus.current?.focus()
-  }, [scopedPostUrl])
+    if (effectivePostUrl) successStatus.current?.focus()
+  }, [effectivePostUrl])
 
   function startOAuth() {
     window.location.assign("/api/linkedin/oauth/start")
@@ -206,7 +238,8 @@ export function LinkedInPublisherPanel({
     preflightReady: scopedPreflight !== undefined,
     hasExecutionIdentity: executionIdentity !== null,
     publishing,
-    postUrl: scopedPostUrl,
+    postUrl: effectivePostUrl,
+    publishStatus: scopedPublishStatus,
     recovery,
   })
   const lockReason = !artifactReady
@@ -217,9 +250,15 @@ export function LinkedInPublisherPanel({
         ? "This carousel revision is stale. Rerun and approve the current revision before publishing."
         : scopedPreflightFailure
           ? "Publishing is locked because the approved artifact could not be validated."
-          : connection?.connected && !scopedPreflight
-            ? "Validating the approved carousel on the server…"
-            : undefined
+          : scopedPublishStatusFailure
+            ? "Publishing is locked because the previous publish status could not be verified."
+            : scopedPublishStatus?.state === "in_progress"
+              ? "A publish attempt is still being reconciled. Refresh after it completes."
+              : scopedPublishStatus?.state === "unknown"
+                ? "Publishing is locked while the previous post outcome is unknown."
+                : connection?.connected && (!scopedPreflight || !scopedPublishStatus)
+                  ? "Validating the approved carousel on the server…"
+                  : undefined
 
   return (
     <Card className="overflow-hidden">
@@ -251,7 +290,7 @@ export function LinkedInPublisherPanel({
           </div>
         ) : null}
 
-        {scopedFailure?.code === "UNKNOWN_OUTCOME" ? (
+        {scopedFailure?.code === "UNKNOWN_OUTCOME" || scopedPublishStatus?.state === "unknown" ? (
           <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm text-foreground" role="alert">
             We could not confirm whether LinkedIn created the post. Check LinkedIn before trying again.
           </div>
@@ -269,12 +308,12 @@ export function LinkedInPublisherPanel({
           aria-live="polite"
           tabIndex={-1}
         >
-          {scopedPostUrl ? (
+          {effectivePostUrl ? (
             <p className="text-sm">
               <span className="font-medium">Published successfully.</span>{" "}
               <a
                 className="inline-flex items-center gap-1.5 font-medium text-primary underline-offset-4 hover:underline"
-                href={scopedPostUrl}
+                href={effectivePostUrl}
                 target="_blank"
                 rel="noreferrer"
               >
@@ -329,6 +368,7 @@ function actionFor({
   hasExecutionIdentity,
   publishing,
   postUrl,
+  publishStatus,
   recovery,
 }: {
   connection: LinkedInConnection | null
@@ -336,11 +376,13 @@ function actionFor({
   hasExecutionIdentity: boolean
   publishing: boolean
   postUrl?: string
+  publishStatus?: LinkedInPublishStatus
   recovery: RecoveryPolicy
 }) {
   if (publishing || postUrl || connection === null) return null
   if (!connection.connected) return connection.reconnectRequired ? "reconnect" : "connect"
-  if (!preflightReady || !hasExecutionIdentity) return null
+  if (!preflightReady || !hasExecutionIdentity || !publishStatus) return null
+  if (publishStatus.state !== "idle" && publishStatus.state !== "retry_safe") return null
   if (recovery.action === "retry") return "retry"
   if (recovery.action === "rateRetry") return "rateRetry"
   if (recovery.blocksPublish) return null
@@ -364,6 +406,7 @@ function publisherState({
   hasExecutionIdentity,
   publishing,
   postUrl,
+  publishStatus,
   failure,
 }: {
   connection: LinkedInConnection | null
@@ -372,6 +415,7 @@ function publisherState({
   hasExecutionIdentity: boolean
   publishing: boolean
   postUrl?: string
+  publishStatus?: LinkedInPublishStatus
   failure?: LinkedInPublisherApiError
 }): LinkedInPublisherState {
   if (publishing) return "preparing_pdf"
@@ -379,7 +423,8 @@ function publisherState({
   if (failure?.code === "STALE_REVISION" || failure?.code === "INVALID_ARTIFACT") return "locked"
   if (failure) return "failed"
   if (!connection?.connected) return "disconnected"
-  if (!artifactReady || !hasExecutionIdentity || !preflightReady) return "locked"
+  if (!artifactReady || !hasExecutionIdentity || !preflightReady || !publishStatus) return "locked"
+  if (publishStatus.state === "in_progress" || publishStatus.state === "unknown") return "locked"
   return "ready"
 }
 

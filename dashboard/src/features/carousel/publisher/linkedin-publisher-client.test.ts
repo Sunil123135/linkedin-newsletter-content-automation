@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest"
 import {
   LinkedInPublisherApiError,
   getLinkedInConnection,
+  getLinkedInPublishStatus,
   getLinkedInPublisherPreflight,
   publishCarousel,
 } from "./linkedin-publisher-client"
@@ -39,6 +40,40 @@ describe("LinkedIn publisher client", () => {
         headers: { accept: "application/json" },
       },
     )
+  })
+
+  it.each([
+    { state: "idle" },
+    { state: "in_progress" },
+    { state: "retry_safe" },
+    { state: "unknown" },
+    {
+      state: "published",
+      postUrl: "https://www.linkedin.com/feed/update/urn:li:share:post-789",
+      publishedAt: "2026-08-03T10:00:01.000Z",
+    },
+  ] as const)("loads the safe reconciled $state publish status", async (status) => {
+    const fetch = vi.fn(async () => Response.json(status))
+
+    await expect(getLinkedInPublishStatus("run-123", 3, fetch)).resolves.toEqual(status)
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/linkedin/publish/status?runId=run-123&revision=3",
+      {
+        credentials: "same-origin",
+        headers: { accept: "application/json" },
+      },
+    )
+  })
+
+  it("rejects publish status containing attempt identifiers or provider internals", async () => {
+    const fetch = vi.fn(async () => Response.json({
+      state: "unknown",
+      idempotencyKey: "8ec7ccdb-22bc-469b-99c6-7f0fc6d92951",
+    }))
+
+    await expect(getLinkedInPublishStatus("run-123", 3, fetch)).rejects.toMatchObject({
+      code: "INVALID_UPSTREAM_RESPONSE",
+    })
   })
 
   it("rejects preflight metadata containing an unsafe preview URL or extra manifest fields", async () => {

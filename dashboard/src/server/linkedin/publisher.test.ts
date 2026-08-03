@@ -60,8 +60,9 @@ describe("ApprovedCarouselPublisher", () => {
       "initialize:urn:li:person:member-123",
       "upload:https://uploads.linkedin.test/document",
       "transition:started->document_uploaded",
+      "transition:document_uploaded->post_dispatching",
       "post:urn:li:person:member-123:urn:li:document:document-456",
-      "transition:document_uploaded->published",
+      "transition:post_dispatching->published",
     ])
   })
 
@@ -133,11 +134,39 @@ describe("ApprovedCarouselPublisher", () => {
       ...attemptIdentity,
       state: "document_uploaded",
       startedAt: "2026-08-03T10:00:00.000Z",
+      documentUploadedAt: "2026-08-03T10:00:01.000Z",
       documentUrn,
       pdfSha256: createHash("sha256").update(pdf).digest("hex"),
     })
     expect(fixture.events.indexOf("transition:started->document_uploaded"))
       .toBeLessThan(fixture.events.indexOf(`post:${credential.authorUrn}:${documentUrn}`))
+  })
+
+  it("durably arms the post-dispatch barrier before invoking the Posts client", async () => {
+    const fixture = createFixture()
+
+    await fixture.publisher.publish({ ...identity, credential })
+
+    const barrier = fixture.transitions.find((transition) => transition.next.state === "post_dispatching")
+    expect(barrier).toMatchObject({
+      expected: "document_uploaded",
+      next: {
+        state: "post_dispatching",
+        dispatchStartedAt: "2026-08-03T10:00:01.000Z",
+      },
+    })
+    expect(fixture.events.indexOf("transition:document_uploaded->post_dispatching"))
+      .toBeLessThan(fixture.events.indexOf(`post:${credential.authorUrn}:${documentUrn}`))
+  })
+
+  it("does not dispatch Posts when the durable barrier cannot be stored", async () => {
+    const fixture = createFixture({ transitionErrorState: "post_dispatching" })
+
+    await expect(fixture.publisher.publish({ ...identity, credential })).rejects.toMatchObject({
+      code: "CONFIGURATION_ERROR",
+    })
+    expect(fixture.events.some((event) => event.startsWith("post:"))).toBe(false)
+    expect(fixture.events).toContain("transition:document_uploaded->failed_safe")
   })
 
   it("revalidates the exact preflight checksum before any LinkedIn request", async () => {
@@ -164,7 +193,7 @@ describe("ApprovedCarouselPublisher", () => {
       code: "UNKNOWN_OUTCOME",
     } satisfies Partial<LinkedInError>)
     expect(fixture.transitions.at(-1)).toMatchObject({
-      expected: "document_uploaded",
+      expected: "post_dispatching",
       next: {
         state: "unknown",
         documentUrn,
@@ -182,7 +211,7 @@ describe("ApprovedCarouselPublisher", () => {
       code: "UNKNOWN_OUTCOME",
     } satisfies Partial<LinkedInError>)
     expect(fixture.transitions.at(-1)).toMatchObject({
-      expected: "document_uploaded",
+      expected: "post_dispatching",
       next: { state: "unknown", documentUrn },
     })
   })
@@ -196,7 +225,7 @@ describe("ApprovedCarouselPublisher", () => {
       code: "UNKNOWN_OUTCOME",
     } satisfies Partial<LinkedInError>)
     expect(fixture.transitions.at(-1)).toMatchObject({
-      expected: "document_uploaded",
+      expected: "post_dispatching",
       next: {
         state: "unknown",
         documentUrn,
@@ -239,7 +268,7 @@ describe("ApprovedCarouselPublisher", () => {
         code,
       } satisfies Partial<LinkedInError>)
       expect(fixture.transitions.at(-1)).toMatchObject({
-        expected: "document_uploaded",
+        expected: "post_dispatching",
         next: {
           state: "failed_safe",
           documentUrn,
@@ -284,7 +313,9 @@ function createFixture(options: FixtureOptions = {}) {
       if (options.statefulAttemptStore && durableRecord) {
         if (durableRecord.state === "unknown") return { kind: "unknown", record: durableRecord }
         if (durableRecord.state === "published") return { kind: "replay", record: durableRecord }
-        if (durableRecord.state === "started" || durableRecord.state === "document_uploaded") {
+        if (durableRecord.state === "started"
+          || durableRecord.state === "document_uploaded"
+          || durableRecord.state === "post_dispatching") {
           return { kind: "in_progress", record: durableRecord }
         }
       }
@@ -301,6 +332,9 @@ function createFixture(options: FixtureOptions = {}) {
     },
     async get() {
       return null
+    },
+    async getScopeStatus() {
+      return { state: "idle" }
     },
   }
   const artifactStore: CarouselArtifactStore = {
@@ -392,6 +426,7 @@ function publishedRecord(): Extract<PublishAttemptRecord, { state: "published" }
     startedAt: "2026-08-03T10:00:00.000Z",
     documentUrn,
     pdfSha256: createHash("sha256").update(pdf).digest("hex"),
+    dispatchStartedAt: "2026-08-03T10:00:00.500Z",
     postUrn,
     postUrl,
     publishedAt,

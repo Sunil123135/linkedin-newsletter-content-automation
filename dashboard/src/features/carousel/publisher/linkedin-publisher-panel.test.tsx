@@ -119,6 +119,52 @@ describe("LinkedInPublisherPanel", () => {
     expect(screen.getByText("Connected as Ada Lovelace")).toBeVisible()
   })
 
+  it("keeps a reconciled in-progress attempt locked after a browser reload", async () => {
+    stubFetchForStatus({ state: "in_progress" }, connectionResponse(connectedConnection))
+
+    render(<LinkedInPublisherPanel {...panelProps} />)
+
+    expect(await screen.findByText(
+      "A publish attempt is still being reconciled. Refresh after it completes.",
+    )).toBeVisible()
+    expect(screen.queryByRole("button", { name: "Publish to LinkedIn" })).not.toBeInTheDocument()
+  })
+
+  it("fails closed when a reconciled attempt has an unknown post outcome", async () => {
+    stubFetchForStatus({ state: "unknown" }, connectionResponse(connectedConnection))
+
+    render(<LinkedInPublisherPanel {...panelProps} />)
+
+    expect(await screen.findByText(
+      "We could not confirm whether LinkedIn created the post. Check LinkedIn before trying again.",
+    )).toBeVisible()
+    expect(screen.queryByRole("button", { name: "Publish to LinkedIn" })).not.toBeInTheDocument()
+  })
+
+  it("restores an existing published post instead of offering another publish", async () => {
+    stubFetchForStatus({
+      state: "published",
+      postUrl: publishResult.postUrl,
+      publishedAt: publishResult.publishedAt,
+    }, connectionResponse(connectedConnection))
+
+    render(<LinkedInPublisherPanel {...panelProps} />)
+
+    expect(await screen.findByRole("link", { name: "View LinkedIn post" })).toHaveAttribute(
+      "href",
+      publishResult.postUrl,
+    )
+    expect(screen.queryByRole("button", { name: "Publish to LinkedIn" })).not.toBeInTheDocument()
+  })
+
+  it("allows confirmation after the server proves a stale pre-Posts attempt retry-safe", async () => {
+    stubFetchForStatus({ state: "retry_safe" }, connectionResponse(connectedConnection))
+
+    render(<LinkedInPublisherPanel {...panelProps} />)
+
+    expect(await screen.findByRole("button", { name: "Publish to LinkedIn" })).toBeEnabled()
+  })
+
   it("uses only server-validated title, caption, and five previews in final confirmation", async () => {
     stubFetch(connectionResponse(connectedConnection))
     const user = userEvent.setup()
@@ -135,6 +181,9 @@ describe("LinkedInPublisherPanel", () => {
     const fetch = vi.fn<PublisherFetch>(async (input) => {
       const url = String(input)
       if (url === "/api/linkedin/connection") return connectionResponse(connectedConnection)
+      if (url.startsWith("/api/linkedin/publish/status?")) {
+        return Response.json({ state: "idle" })
+      }
       if (url.includes("revision=4")) {
         return errorResponse("STALE_REVISION", 409, "The approved carousel revision has changed.")
       }
@@ -495,6 +544,13 @@ function errorResponse(
 }
 
 function stubFetch(...responses: Array<Response | Promise<Response> | Error>) {
+  return stubFetchForStatus({ state: "idle" }, ...responses)
+}
+
+function stubFetchForStatus(
+  status: object,
+  ...responses: Array<Response | Promise<Response> | Error>
+) {
   const fetch = vi.fn<PublisherFetch>(async (input) => {
     if (String(input).startsWith("/api/linkedin/preflight?")) {
       const url = new URL(String(input), "http://localhost")
@@ -502,6 +558,9 @@ function stubFetch(...responses: Array<Response | Promise<Response> | Error>) {
         url.searchParams.get("runId") ?? "",
         Number(url.searchParams.get("revision")),
       ))
+    }
+    if (String(input).startsWith("/api/linkedin/publish/status?")) {
+      return Response.json(status)
     }
     const response = responses.shift()
     if (!response) throw new Error("Unexpected fetch")

@@ -14,6 +14,7 @@ import type {
 import type {
   BeginAttemptResult,
   DocumentUploadedPublishAttempt,
+  PostDispatchingPublishAttempt,
   PublishAttemptIdentity,
   PublishAttemptStore,
   StartedPublishAttempt,
@@ -133,12 +134,33 @@ export class ApprovedCarouselPublisher {
       startedAt: started.startedAt,
       documentUrn: initialized.documentUrn,
       pdfSha256: createHash("sha256").update(pdf).digest("hex"),
+      documentUploadedAt: this.now().toISOString(),
     }
     try {
       await this.dependencies.attemptStore.transition(identity, "started", uploaded)
     } catch (error) {
       await this.failSafely(identity, started, error)
       throw error
+    }
+
+    const dispatching: PostDispatchingPublishAttempt = {
+      ...uploaded,
+      state: "post_dispatching",
+      dispatchStartedAt: this.now().toISOString(),
+    }
+    try {
+      await this.dependencies.attemptStore.transition(
+        identity,
+        "document_uploaded",
+        dispatching,
+      )
+    } catch (error) {
+      await this.failUploadedSafely(identity, uploaded, error)
+      throw new LinkedInError(
+        "CONFIGURATION_ERROR",
+        "Publishing state could not be stored safely.",
+        error,
+      )
     }
 
     let postUrn: string
@@ -152,15 +174,15 @@ export class ApprovedCarouselPublisher {
       postUrn = post.postUrn
     } catch (error) {
       if (isDefinitivePostRejection(error)) {
-        await this.dependencies.attemptStore.transition(identity, "document_uploaded", {
-          ...uploaded,
+        await this.dependencies.attemptStore.transition(identity, "post_dispatching", {
+          ...dispatching,
           state: "failed_safe",
           failedAt: this.now().toISOString(),
         })
         throw error
       }
 
-      await this.markUnknown(identity, uploaded, error)
+      await this.markUnknown(identity, dispatching, error)
       throw unknownOutcomeError(error)
     }
 
@@ -170,15 +192,15 @@ export class ApprovedCarouselPublisher {
       publishedAt: this.now().toISOString(),
     }
     try {
-      await this.dependencies.attemptStore.transition(identity, "document_uploaded", {
-        ...uploaded,
+      await this.dependencies.attemptStore.transition(identity, "post_dispatching", {
+        ...dispatching,
         state: "published",
         ...result,
       })
     } catch (error) {
       try {
-        await this.dependencies.attemptStore.transition(identity, "document_uploaded", {
-          ...uploaded,
+        await this.dependencies.attemptStore.transition(identity, "post_dispatching", {
+          ...dispatching,
           state: "unknown",
           failedAt: this.now().toISOString(),
         })
@@ -214,17 +236,37 @@ export class ApprovedCarouselPublisher {
 
   private async markUnknown(
     identity: PublishAttemptIdentity,
+    dispatching: PostDispatchingPublishAttempt,
+    cause: unknown,
+  ): Promise<void> {
+    try {
+      await this.dependencies.attemptStore.transition(identity, "post_dispatching", {
+        ...dispatching,
+        state: "unknown",
+        failedAt: this.now().toISOString(),
+      })
+    } catch (transitionError) {
+      throw unknownOutcomeError(new AggregateError([cause, transitionError]))
+    }
+  }
+
+  private async failUploadedSafely(
+    identity: PublishAttemptIdentity,
     uploaded: DocumentUploadedPublishAttempt,
     cause: unknown,
   ): Promise<void> {
     try {
       await this.dependencies.attemptStore.transition(identity, "document_uploaded", {
         ...uploaded,
-        state: "unknown",
+        state: "failed_safe",
         failedAt: this.now().toISOString(),
       })
     } catch (transitionError) {
-      throw unknownOutcomeError(new AggregateError([cause, transitionError]))
+      throw new LinkedInError(
+        "CONFIGURATION_ERROR",
+        "Publishing state could not be stored safely.",
+        new AggregateError([cause, transitionError]),
+      )
     }
   }
 }
