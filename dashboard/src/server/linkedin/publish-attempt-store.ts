@@ -97,6 +97,7 @@ export class FileSystemPublishAttemptStore implements PublishAttemptStore {
   constructor(
     artifactRoot = process.env.CAROUSEL_ARTIFACT_ROOT,
     private readonly now: () => Date = () => new Date(),
+    private readonly syncDirectory: (directory: string) => Promise<void> = syncAttemptDirectory,
   ) {
     if (!artifactRoot) {
       throw new Error("CAROUSEL_ARTIFACT_ROOT must be configured")
@@ -143,6 +144,7 @@ export class FileSystemPublishAttemptStore implements PublishAttemptStore {
         await this.replaceExpected(existing, "failed_safe", started)
       } else {
         await this.createExclusive(this.recordPath(identity), started)
+        await this.syncDirectory(this.attemptDirectory)
       }
       return { kind: "begun", record: started }
     } finally {
@@ -198,8 +200,9 @@ export class FileSystemPublishAttemptStore implements PublishAttemptStore {
     try {
       await this.createExclusive(temporaryPath, next)
       temporaryCreated = true
-      await rename(temporaryPath, recordPath)
+      await atomicReplace(temporaryPath, recordPath)
       temporaryCreated = false
+      await this.syncDirectory(this.attemptDirectory)
     } finally {
       if (temporaryCreated) await unlink(temporaryPath).catch(() => undefined)
     }
@@ -349,4 +352,29 @@ function isFileSystemError(error: unknown, code: string): error is NodeJS.ErrnoE
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
+}
+
+async function atomicReplace(source: string, destination: string): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      await rename(source, destination)
+      return
+    } catch (error) {
+      const transientWindowsFailure = process.platform === "win32"
+        && (isFileSystemError(error, "EPERM") || isFileSystemError(error, "EACCES"))
+      if (!transientWindowsFailure || attempt === 99) throw error
+      await delay(5)
+    }
+  }
+}
+
+async function syncAttemptDirectory(directory: string): Promise<void> {
+  if (process.platform === "win32") return
+
+  const handle = await open(directory, "r")
+  try {
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
 }

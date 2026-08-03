@@ -158,7 +158,7 @@ describe("ApprovedCarouselPublisher", () => {
     })
 
     await expect(fixture.publisher.publish({ ...identity, credential })).rejects.toMatchObject({
-      code: "INVALID_UPSTREAM_RESPONSE",
+      code: "UNKNOWN_OUTCOME",
     } satisfies Partial<LinkedInError>)
     expect(fixture.transitions.at(-1)).toMatchObject({
       expected: "document_uploaded",
@@ -166,23 +166,67 @@ describe("ApprovedCarouselPublisher", () => {
     })
   })
 
-  it("retains uploaded-document evidence after a safely rejected post", async () => {
+  it("records an ambiguous LinkedIn 5xx as unknown", async () => {
     const fixture = createFixture({
-      postError: new LinkedInError("RATE_LIMITED", "retry later"),
+      postError: new LinkedInError("LINKEDIN_UNAVAILABLE", "temporarily unavailable"),
     })
 
     await expect(fixture.publisher.publish({ ...identity, credential })).rejects.toMatchObject({
-      code: "RATE_LIMITED",
+      code: "UNKNOWN_OUTCOME",
     } satisfies Partial<LinkedInError>)
     expect(fixture.transitions.at(-1)).toMatchObject({
       expected: "document_uploaded",
       next: {
-        state: "failed_safe",
+        state: "unknown",
         documentUrn,
-        pdfSha256: createHash("sha256").update(pdf).digest("hex"),
       },
     })
   })
+
+  it("blocks retry after an unclassified post exception", async () => {
+    const fixture = createFixture({
+      postError: new Error("unexpected client failure after request dispatch"),
+      statefulAttemptStore: true,
+    })
+
+    await expect(fixture.publisher.publish({ ...identity, credential })).rejects.toMatchObject({
+      code: "UNKNOWN_OUTCOME",
+    } satisfies Partial<LinkedInError>)
+    await expect(fixture.publisher.publish({ ...identity, credential })).rejects.toMatchObject({
+      code: "UNKNOWN_OUTCOME",
+    } satisfies Partial<LinkedInError>)
+    expect(fixture.events.filter((event) => event.startsWith("post:"))).toHaveLength(1)
+  })
+
+  it("keeps UNKNOWN_OUTCOME when persisting the unknown state fails", async () => {
+    const fixture = createFixture({
+      postError: new LinkedInError("UNKNOWN_OUTCOME", "ambiguous"),
+      transitionErrorState: "unknown",
+    })
+
+    await expect(fixture.publisher.publish({ ...identity, credential })).rejects.toMatchObject({
+      code: "UNKNOWN_OUTCOME",
+    } satisfies Partial<LinkedInError>)
+  })
+
+  it.each(["AUTH_REQUIRED", "INSUFFICIENT_SCOPE", "RATE_LIMITED"] as const)(
+    "retains uploaded-document evidence after definitive %s rejection",
+    async (code) => {
+      const fixture = createFixture({ postError: new LinkedInError(code, "rejected") })
+
+      await expect(fixture.publisher.publish({ ...identity, credential })).rejects.toMatchObject({
+        code,
+      } satisfies Partial<LinkedInError>)
+      expect(fixture.transitions.at(-1)).toMatchObject({
+        expected: "document_uploaded",
+        next: {
+          state: "failed_safe",
+          documentUrn,
+          pdfSha256: createHash("sha256").update(pdf).digest("hex"),
+        },
+      })
+    },
+  )
 
   it("allows a retry after failed_safe without duplicating a published result", async () => {
     const fixture = createFixture({ begin: { kind: "begun", record: startedRecord() } })
@@ -201,6 +245,8 @@ interface FixtureOptions {
   beginError?: Error
   artifactError?: Error
   postError?: Error
+  statefulAttemptStore?: boolean
+  transitionErrorState?: PublishAttemptState
 }
 
 function createFixture(options: FixtureOptions = {}) {
@@ -209,15 +255,28 @@ function createFixture(options: FixtureOptions = {}) {
     expected: PublishAttemptState
     next: PublishAttemptRecord
   }> = []
+  let durableRecord: PublishAttemptRecord | null = null
   const attemptStore: PublishAttemptStore = {
     async begin(input) {
       events.push(`begin:${input.runId}:${input.revision}`)
       if (options.beginError) throw options.beginError
+      if (options.statefulAttemptStore && durableRecord) {
+        if (durableRecord.state === "unknown") return { kind: "unknown", record: durableRecord }
+        if (durableRecord.state === "published") return { kind: "replay", record: durableRecord }
+        if (durableRecord.state === "started" || durableRecord.state === "document_uploaded") {
+          return { kind: "in_progress", record: durableRecord }
+        }
+      }
+      if (options.statefulAttemptStore) durableRecord = startedRecord()
       return options.begin ?? { kind: "begun", record: startedRecord() }
     },
     async transition(_attemptIdentity, expected, next) {
       events.push(`transition:${expected}->${next.state}`)
       transitions.push({ expected, next })
+      if (options.transitionErrorState === next.state) {
+        throw new Error(`Could not persist ${next.state}`)
+      }
+      if (options.statefulAttemptStore) durableRecord = next
     },
     async get() {
       return null

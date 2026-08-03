@@ -143,23 +143,17 @@ export class ApprovedCarouselPublisher {
       })
       postUrn = post.postUrn
     } catch (error) {
-      if (isLinkedInError(error, "UNKNOWN_OUTCOME")
-        || isLinkedInError(error, "INVALID_UPSTREAM_RESPONSE")) {
+      if (isDefinitivePostRejection(error)) {
         await this.dependencies.attemptStore.transition(identity, "document_uploaded", {
           ...uploaded,
-          state: "unknown",
+          state: "failed_safe",
           failedAt: this.now().toISOString(),
         })
-        if (error.code === "UNKNOWN_OUTCOME") throw unknownOutcomeError(error)
         throw error
       }
 
-      await this.dependencies.attemptStore.transition(identity, "document_uploaded", {
-        ...uploaded,
-        state: "failed_safe",
-        failedAt: this.now().toISOString(),
-      })
-      throw error
+      await this.markUnknown(identity, uploaded, error)
+      throw unknownOutcomeError(error)
     }
 
     const result: LinkedInPublishResult = {
@@ -207,6 +201,22 @@ export class ApprovedCarouselPublisher {
         "Publishing state could not be stored safely.",
         new AggregateError([cause, transitionError]),
       )
+    }
+  }
+
+  private async markUnknown(
+    identity: PublishAttemptIdentity,
+    uploaded: DocumentUploadedPublishAttempt,
+    cause: unknown,
+  ): Promise<void> {
+    try {
+      await this.dependencies.attemptStore.transition(identity, "document_uploaded", {
+        ...uploaded,
+        state: "unknown",
+        failedAt: this.now().toISOString(),
+      })
+    } catch (transitionError) {
+      throw unknownOutcomeError(new AggregateError([cause, transitionError]))
     }
   }
 }
@@ -258,6 +268,10 @@ function unknownOutcomeError(cause?: unknown): LinkedInError {
   )
 }
 
-function isLinkedInError(error: unknown, code: LinkedInError["code"]): error is LinkedInError {
-  return error instanceof LinkedInError && error.code === code
+function isDefinitivePostRejection(error: unknown): error is LinkedInError {
+  return error instanceof LinkedInError && (
+    error.code === "AUTH_REQUIRED"
+    || error.code === "INSUFFICIENT_SCOPE"
+    || error.code === "RATE_LIMITED"
+  )
 }

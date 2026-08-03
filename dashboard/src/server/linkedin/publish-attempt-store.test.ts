@@ -129,6 +129,30 @@ describe("FileSystemPublishAttemptStore", () => {
     expect(contents).not.toContain("access-token")
     expect(contents).not.toContain("%PDF")
   })
+
+  it("syncs the attempt directory after initial creation and atomic replacement", async () => {
+    const artifactRoot = await mkdtemp(path.join(tmpdir(), "publish-attempt-store-sync-"))
+    temporaryDirectories.push(artifactRoot)
+    const syncedStates: string[] = []
+    const store = new FileSystemPublishAttemptStore(
+      artifactRoot,
+      () => new Date("2026-08-03T10:00:00.000Z"),
+      async (attemptDirectory) => {
+        const recordFile = (await readdir(attemptDirectory))
+          .find((file) => file.endsWith(".json"))
+        if (!recordFile) throw new Error("Directory sync happened before record creation")
+        const record = JSON.parse(
+          await readFile(path.join(attemptDirectory, recordFile), "utf8"),
+        ) as { state?: unknown }
+        syncedStates.push(String(record.state))
+      },
+    )
+
+    const begun = await store.begin(identity)
+    await store.transition(identity, "started", uploadedRecord(begun.record.startedAt))
+
+    expect(syncedStates).toEqual(["started", "document_uploaded"])
+  })
 })
 
 async function createStore() {

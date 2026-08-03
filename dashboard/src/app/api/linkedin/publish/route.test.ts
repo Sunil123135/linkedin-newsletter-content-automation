@@ -58,6 +58,41 @@ describe("POST /api/linkedin/publish", () => {
     expect(response.headers.get("cache-control")).toBe("no-store")
   })
 
+  it.each([
+    ["accessToken", "attacker-supplied-token"],
+    ["authorUrn", "urn:li:person:other-member"],
+    ["caption", "Attacker-controlled commentary"],
+    ["visibility", "CONNECTIONS"],
+    ["files", ["local-file.pdf"]],
+    ["storageKey", "../outside.pdf"],
+  ])("rejects the forbidden %s field before composition", async (field, value) => {
+    let compositionCalls = 0
+    const handler = createPublishRoute({
+      loadConfig: () => {
+        compositionCalls += 1
+        return config
+      },
+      loadCredential: () => credential,
+      createPublisher: () => {
+        throw new Error("Should not compose an invalid request")
+      },
+    })
+
+    const response = await handler(request({ ...body, [field]: value }))
+    const responseBody = await response.json()
+
+    expect(response.status).toBe(422)
+    expect(responseBody).toEqual({
+      error: {
+        code: "INVALID_ARTIFACT",
+        message: "The publish request is invalid.",
+      },
+    })
+    expect(compositionCalls).toBe(0)
+    expect(JSON.stringify(responseBody)).not.toContain(String(value))
+    expect(response.headers.get("cache-control")).toBe("no-store")
+  })
+
   it("requires a valid encrypted credential", async () => {
     vi.stubEnv("LINKEDIN_CLIENT_ID", "configured-client-id")
     vi.stubEnv("LINKEDIN_CLIENT_SECRET", "configured-client-secret")

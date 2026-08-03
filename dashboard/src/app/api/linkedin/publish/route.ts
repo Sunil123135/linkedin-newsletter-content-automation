@@ -20,7 +20,7 @@ const publishRequestSchema = z.object({
   runId: z.string().min(1).max(128),
   revision: z.number().int().positive(),
   idempotencyKey: z.string().uuid(),
-})
+}).strict()
 
 interface PublishRouteDependencies {
   loadConfig(): LinkedInConfig
