@@ -2,7 +2,12 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { BookOpenTextIcon, ImagesIcon, OrbitIcon } from "lucide-react"
+import {
+  BookOpenTextIcon,
+  ImagesIcon,
+  LayoutDashboardIcon,
+  OrbitIcon,
+} from "lucide-react"
 
 import {
   Sidebar,
@@ -17,6 +22,8 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
 import type { WorkflowKind } from "@/features/automation/types"
+
+export type DashboardView = "automation" | "pipeline"
 
 const workflows = [
   {
@@ -35,8 +42,12 @@ const workflows = [
 
 export function AppSidebar({
   workflow,
+  view = "automation",
   ...props
-}: React.ComponentProps<typeof Sidebar> & { workflow: WorkflowKind }) {
+}: React.ComponentProps<typeof Sidebar> & {
+  workflow: WorkflowKind
+  view?: DashboardView
+}) {
   return (
     <Sidebar collapsible="offcanvas" {...props}>
       <SidebarHeader className="border-b p-4">
@@ -57,13 +68,32 @@ export function AppSidebar({
 
       <SidebarContent>
         <SidebarGroup className="pt-4">
+          <SidebarGroupLabel>Overview</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu className="gap-1.5">
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={view === "pipeline"}
+                  tooltip="Content Pipeline"
+                  className="h-auto min-h-10 py-2"
+                  render={<Link href="/dashboard?view=pipeline" />}
+                >
+                  <LayoutDashboardIcon />
+                  <span className="text-sm leading-snug">Content Pipeline</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
           <SidebarGroupLabel>Workspaces</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu className="gap-1.5">
               {workflows.map((item) => (
                 <SidebarMenuItem key={item.kind}>
                   <SidebarMenuButton
-                    isActive={workflow === item.kind}
+                    isActive={view === "automation" && workflow === item.kind}
                     tooltip={item.title}
                     className="h-auto min-h-10 py-2"
                     render={<Link href={item.href} />}

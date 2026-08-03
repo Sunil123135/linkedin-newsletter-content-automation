@@ -1,13 +1,15 @@
 import { AppSidebar } from "@/components/app-sidebar"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { AutomationDashboard } from "@/features/automation/automation-dashboard"
+import { PipelineWorkspace } from "@/features/pipeline/pipeline-workspace"
 
 export default async function Page({
   searchParams,
 }: {
-  searchParams: Promise<{ workflow?: string }>
+  searchParams: Promise<{ workflow?: string; view?: string }>
 }) {
   const params = await searchParams
+  const view = params.view === "pipeline" ? "pipeline" : "automation"
   const workflow = params.workflow === "newsletter" ? "newsletter" : "carousel"
 
   return (
@@ -19,9 +21,13 @@ export default async function Page({
         } as React.CSSProperties
       }
     >
-      <AppSidebar variant="inset" workflow={workflow} />
+      <AppSidebar variant="inset" workflow={workflow} view={view} />
       <SidebarInset>
-        <AutomationDashboard workflow={workflow} />
+        {view === "pipeline" ? (
+          <PipelineWorkspace />
+        ) : (
+          <AutomationDashboard workflow={workflow} />
+        )}
       </SidebarInset>
     </SidebarProvider>
   )
