@@ -9,6 +9,8 @@ it("opens every generated slide individually", async () => {
   const user = userEvent.setup()
   render(<CarouselOutputGallery slides={CAROUSEL_SLIDES} />)
 
+  expect(screen.getAllByRole("button", { name: /Review slide/i })).toHaveLength(5)
+
   for (const slide of CAROUSEL_SLIDES) {
     await user.click(screen.getByRole("button", { name: `Review slide ${slide.index}` }))
     expect(screen.getByRole("dialog")).toHaveTextContent(slide.title)

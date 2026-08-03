@@ -3,6 +3,14 @@
 import { useState } from "react"
 
 import { SiteHeader } from "@/components/site-header"
+import { Card, CardContent } from "@/components/ui/card"
+
+import { LinkedInPublisherNode } from "../carousel/publisher/linkedin-publisher-node"
+import { LinkedInPublisherPanel } from "../carousel/publisher/linkedin-publisher-panel"
+import {
+  toCanvasExecutionStatus,
+  type LinkedInPublisherState,
+} from "../carousel/publisher/linkedin-publisher-state"
 
 import { CarouselOutputGallery } from "./carousel-output-gallery"
 import { CarouselVisualProduction } from "./carousel-visual-production"
@@ -23,13 +31,24 @@ function AutomationWorkspace({ workflow }: { workflow: WorkflowKind }) {
   const workflowDefinition =
     workflow === "newsletter" ? NEWSLETTER_WORKFLOW : CAROUSEL_WORKFLOW
   const [selectedNodeId, setSelectedNodeId] = useState<NodeId>("source")
+  const [publisherState, setPublisherState] =
+    useState<LinkedInPublisherState>("disconnected")
   const simulation = useWorkflowSimulation(
     workflowDefinition.nodes,
     workflowDefinition.connections
   )
+  const approvedArtifact = null satisfies null | {
+    runId: string
+    revision: number
+  }
+  const publisherArtifact = artifactProps(approvedArtifact)
   const selectedNode =
     workflowDefinition.nodes.find((node) => node.id === selectedNodeId) ??
     workflowDefinition.nodes[0]
+  const statuses = {
+    ...simulation.statuses,
+    publisher: toCanvasExecutionStatus(publisherState),
+  }
 
   return (
     <>
@@ -42,12 +61,31 @@ function AutomationWorkspace({ workflow }: { workflow: WorkflowKind }) {
         <div className="grid min-w-0 gap-4 2xl:grid-cols-[minmax(0,1fr)_19rem]">
           <WorkflowCanvas
             workflow={workflowDefinition}
-            statuses={simulation.statuses}
+            statuses={statuses}
             activeConnectionId={simulation.activeConnectionId}
             selectedNodeId={selectedNodeId}
             onSelectNode={setSelectedNodeId}
           />
-          <NodeInspector node={selectedNode} />
+          {workflow === "carousel" && selectedNodeId === "publisher" ? (
+            <div className="space-y-4">
+              <Card>
+                <CardContent className="pt-5">
+                  <LinkedInPublisherNode
+                    state={publisherState}
+                    approvedRevision={publisherArtifact.revision ?? undefined}
+                  />
+                </CardContent>
+              </Card>
+              <LinkedInPublisherPanel
+                runId={publisherArtifact.runId}
+                revision={publisherArtifact.revision}
+                artifactReady={approvedArtifact !== null}
+                onStateChange={setPublisherState}
+              />
+            </div>
+          ) : (
+            <NodeInspector node={selectedNode} />
+          )}
         </div>
 
         {workflow === "carousel" ? (
@@ -68,6 +106,13 @@ function AutomationWorkspace({ workflow }: { workflow: WorkflowKind }) {
       </main>
     </>
   )
+}
+
+function artifactProps(artifact: null | { runId: string; revision: number }) {
+  return {
+    runId: artifact?.runId ?? null,
+    revision: artifact?.revision ?? null,
+  }
 }
 
 export function AutomationDashboard({ workflow }: { workflow: WorkflowKind }) {
