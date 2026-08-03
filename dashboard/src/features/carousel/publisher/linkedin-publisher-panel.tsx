@@ -79,13 +79,14 @@ export function LinkedInPublisherPanel({
   const publishing = hasScopedIdentity && publishingIdentity === executionIdentity
   const dialogOpen = hasScopedIdentity && dialogIdentity === executionIdentity
   const recovery = recoveryFor(scopedFailure)
+  const rateLimitDelay = positiveRetryAfterSeconds(scopedFailure?.retryAfterSeconds)
 
   useEffect(() => {
-    if (scopedFailure?.code !== "RATE_LIMITED" || !scopedFailure.retryAfterSeconds) return
+    if (scopedFailure?.code !== "RATE_LIMITED" || rateLimitDelay === undefined) return
 
-    const timeout = window.setTimeout(() => setRateLimitExpired(true), scopedFailure.retryAfterSeconds * 1_000)
+    const timeout = window.setTimeout(() => setRateLimitExpired(true), rateLimitDelay * 1_000)
     return () => window.clearTimeout(timeout)
-  }, [executionIdentity, scopedFailure])
+  }, [executionIdentity, rateLimitDelay, scopedFailure?.code])
 
   const state = publisherState({
     connection,
@@ -221,11 +222,11 @@ export function LinkedInPublisherPanel({
         {action === "retry" || action === "rateRetry" ? (
           <Button
             type="button"
-            disabled={action === "rateRetry" && !rateLimitExpired}
+            disabled={action === "rateRetry" && rateLimitDelay !== undefined && !rateLimitExpired}
             onClick={() => setDialogIdentity(executionIdentity)}
           >
-            <SendIcon /> {action === "rateRetry" && !rateLimitExpired
-              ? `Retry Publish in ${scopedFailure?.retryAfterSeconds}s`
+            <SendIcon /> {action === "rateRetry" && rateLimitDelay !== undefined && !rateLimitExpired
+              ? `Retry Publish in ${rateLimitDelay}s`
               : "Retry Publish"}
           </Button>
         ) : null}
@@ -322,12 +323,15 @@ function recoveryFor(failure?: LinkedInPublisherApiError): RecoveryPolicy {
   }
   if (failure.code === "UNKNOWN_OUTCOME") return { blocksPublish: true }
   if (failure.code === "RATE_LIMITED") {
+    const delay = positiveRetryAfterSeconds(failure.retryAfterSeconds)
     return {
       action: "rateRetry",
       blocksPublish: false,
-      message: failure.retryAfterSeconds
-        ? `LinkedIn asked you to retry in ${failure.retryAfterSeconds} seconds.`
-        : "LinkedIn asked you to retry later.",
+      message: delay !== undefined
+        ? `LinkedIn asked you to retry in ${delay} seconds.`
+        : failure.retryAfterSeconds === 0
+          ? "LinkedIn asked you to retry now."
+          : "LinkedIn asked you to retry later.",
     }
   }
   if (failure.code === "CONFIGURATION_ERROR") {
@@ -342,6 +346,12 @@ function recoveryFor(failure?: LinkedInPublisherApiError): RecoveryPolicy {
 function identityFor(runId: string | null, revision: number | null): string | null {
   if (runId === null || revision === null) return null
   return `${runId}\u0000${revision}`
+}
+
+function positiveRetryAfterSeconds(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value > 0
+    ? value
+    : undefined
 }
 
 async function publishWithOneTransportRetry(request: PublishCarouselRequest) {

@@ -295,6 +295,27 @@ describe("LinkedInPublisherPanel", () => {
     expect(screen.getByRole("button", { name: "Retry Publish" })).toBeEnabled()
   })
 
+  it.each([
+    [undefined, "LinkedIn asked you to retry later."],
+    [0, "LinkedIn asked you to retry now."],
+  ] as const)("offers a manual confirmation-gated retry when RATE_LIMITED returns %s seconds", async (retryAfterSeconds, guidance) => {
+    stubFetch(
+      connectionResponse(connectedConnection),
+      errorResponse("RATE_LIMITED", 429, "Try again later.", retryAfterSeconds),
+    )
+    const user = userEvent.setup()
+
+    render(<LinkedInPublisherPanel {...panelProps} />)
+    await user.click(await screen.findByRole("button", { name: "Publish to LinkedIn" }))
+    await user.click(screen.getByRole("button", { name: "Publish document" }))
+
+    expect(await screen.findByText(guidance)).toBeVisible()
+    expect(screen.getByRole("button", { name: "Retry Publish" })).toBeEnabled()
+    expect(document.body.textContent).not.toMatch(/undefined|NaN|-\d+s/i)
+    await user.click(screen.getByRole("button", { name: "Retry Publish" }))
+    expect(screen.getByRole("dialog", { name: "Publish carousel to LinkedIn" })).toBeVisible()
+  })
+
   it("routes retry-safe provider failures back through the confirmation dialog", async () => {
     stubFetch(
       connectionResponse(connectedConnection),
