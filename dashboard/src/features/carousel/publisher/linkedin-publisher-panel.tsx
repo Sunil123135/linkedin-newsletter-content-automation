@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { ExternalLinkIcon, LinkIcon, LockKeyholeIcon, SendIcon } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
@@ -31,12 +31,20 @@ export function LinkedInPublisherPanel({
   artifactReady,
   onStateChange,
 }: LinkedInPublisherPanelProps) {
+  const executionIdentity = identityFor(runId, revision)
   const [connection, setConnection] = useState<LinkedInConnection | null>(null)
-  const [dialogOpen, setDialogOpen] = useState(false)
-  const [publishing, setPublishing] = useState(false)
+  const [dialogIdentity, setDialogIdentity] = useState<string | null>(null)
+  const [publishingIdentity, setPublishingIdentity] = useState<string | null>(null)
+  const [outcomeIdentity, setOutcomeIdentity] = useState<string | null>(null)
   const [postUrl, setPostUrl] = useState<string>()
   const [failure, setFailure] = useState<LinkedInPublisherApiError>()
+  const [rateLimitExpired, setRateLimitExpired] = useState(false)
   const mounted = useRef(true)
+  const currentIdentity = useRef(executionIdentity)
+
+  useLayoutEffect(() => {
+    currentIdentity.current = executionIdentity
+  }, [executionIdentity])
 
   useEffect(() => {
     mounted.current = true
@@ -52,7 +60,41 @@ export function LinkedInPublisherPanel({
     }
   }, [])
 
-  const state = publisherState({ connection, artifactReady, publishing, postUrl, failure })
+  useEffect(() => {
+    const identityToReset = executionIdentity
+    queueMicrotask(() => {
+      if (currentIdentity.current !== identityToReset) return
+      setDialogIdentity(null)
+      setPublishingIdentity(null)
+      setOutcomeIdentity(null)
+      setPostUrl(undefined)
+      setFailure(undefined)
+      setRateLimitExpired(false)
+    })
+  }, [executionIdentity])
+
+  const hasScopedIdentity = executionIdentity !== null
+  const scopedPostUrl = hasScopedIdentity && outcomeIdentity === executionIdentity ? postUrl : undefined
+  const scopedFailure = hasScopedIdentity && outcomeIdentity === executionIdentity ? failure : undefined
+  const publishing = hasScopedIdentity && publishingIdentity === executionIdentity
+  const dialogOpen = hasScopedIdentity && dialogIdentity === executionIdentity
+  const recovery = recoveryFor(scopedFailure)
+
+  useEffect(() => {
+    if (scopedFailure?.code !== "RATE_LIMITED" || !scopedFailure.retryAfterSeconds) return
+
+    const timeout = window.setTimeout(() => setRateLimitExpired(true), scopedFailure.retryAfterSeconds * 1_000)
+    return () => window.clearTimeout(timeout)
+  }, [executionIdentity, scopedFailure])
+
+  const state = publisherState({
+    connection,
+    artifactReady,
+    hasExecutionIdentity: executionIdentity !== null,
+    publishing,
+    postUrl: scopedPostUrl,
+    failure: scopedFailure,
+  })
 
   useEffect(() => {
     onStateChange(state)
@@ -63,35 +105,55 @@ export function LinkedInPublisherPanel({
   }
 
   async function confirmPublish() {
-    if (!runId || !revision || !connection?.connected || !artifactReady || publishing) return
+    if (!runId || !revision || !executionIdentity || !connection?.connected || !artifactReady || publishing) return
 
+    const requestIdentity = executionIdentity
     const request: PublishCarouselRequest = {
       runId,
       revision,
       idempotencyKey: crypto.randomUUID(),
     }
-    setPublishing(true)
+    setPublishingIdentity(requestIdentity)
+    setOutcomeIdentity(null)
     setFailure(undefined)
+    setPostUrl(undefined)
+    setRateLimitExpired(false)
 
     try {
       const result = await publishWithOneTransportRetry(request)
-      if (!mounted.current) return
+      if (!mounted.current || currentIdentity.current !== requestIdentity) return
+      setOutcomeIdentity(requestIdentity)
       setPostUrl(result.postUrl)
-      setDialogOpen(false)
+      setDialogIdentity(null)
     } catch (error) {
-      if (!mounted.current) return
+      if (!mounted.current || currentIdentity.current !== requestIdentity) return
       const apiError = toSafeApiError(error)
+      setOutcomeIdentity(requestIdentity)
       setFailure(apiError)
-      setDialogOpen(false)
+      setDialogIdentity(null)
       if (apiError.code === "AUTH_REQUIRED" || apiError.code === "INSUFFICIENT_SCOPE") {
         setConnection({ connected: false, reconnectRequired: true })
       }
     } finally {
-      if (mounted.current) setPublishing(false)
+      if (mounted.current && currentIdentity.current === requestIdentity) {
+        setPublishingIdentity(null)
+      }
     }
   }
 
-  const action = actionFor({ connection, artifactReady, runId, revision, publishing, postUrl, failure })
+  const action = actionFor({
+    connection,
+    artifactReady,
+    hasExecutionIdentity: executionIdentity !== null,
+    publishing,
+    postUrl: scopedPostUrl,
+    recovery,
+  })
+  const lockReason = !artifactReady
+    ? "Publishing is locked until an approved carousel artifact is available."
+    : executionIdentity === null
+      ? "Publishing is locked until an approved run and revision are available."
+      : undefined
 
   return (
     <Card className="overflow-hidden">
@@ -116,27 +178,27 @@ export function LinkedInPublisherPanel({
           <p className="text-sm font-medium">Connected as {connection.displayName ?? "LinkedIn member"}</p>
         ) : null}
 
-        {!artifactReady && connection !== null ? (
+        {lockReason && connection !== null ? (
           <div className="rounded-lg border border-dashed bg-muted/30 p-3 text-sm text-muted-foreground">
             <p className="flex items-center gap-2 font-medium text-foreground"><LockKeyholeIcon className="size-4" /> Publishing locked</p>
-            <p className="mt-1">Publishing is locked until an approved carousel artifact is available.</p>
+            <p className="mt-1">{lockReason}</p>
           </div>
         ) : null}
 
-        {failure?.code === "UNKNOWN_OUTCOME" ? (
+        {scopedFailure?.code === "UNKNOWN_OUTCOME" ? (
           <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm" role="alert">
             We could not confirm whether LinkedIn created the post. Check LinkedIn before trying again.
           </div>
-        ) : failure ? (
+        ) : scopedFailure ? (
           <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm" role="alert">
-            {failure.message}
+            {recovery.message ?? scopedFailure.message}
           </div>
         ) : null}
 
-        {postUrl ? (
+        {scopedPostUrl ? (
           <a
             className="inline-flex items-center gap-1.5 text-sm font-medium text-primary underline-offset-4 hover:underline"
-            href={postUrl}
+            href={scopedPostUrl}
             target="_blank"
             rel="noreferrer"
           >
@@ -151,15 +213,27 @@ export function LinkedInPublisherPanel({
         ) : null}
 
         {action === "publish" ? (
-          <Button type="button" disabled={publishing} onClick={() => setDialogOpen(true)}>
+          <Button type="button" disabled={publishing} onClick={() => setDialogIdentity(executionIdentity)}>
             <SendIcon /> Publish to LinkedIn
+          </Button>
+        ) : null}
+
+        {action === "retry" || action === "rateRetry" ? (
+          <Button
+            type="button"
+            disabled={action === "rateRetry" && !rateLimitExpired}
+            onClick={() => setDialogIdentity(executionIdentity)}
+          >
+            <SendIcon /> {action === "rateRetry" && !rateLimitExpired
+              ? `Retry Publish in ${scopedFailure?.retryAfterSeconds}s`
+              : "Retry Publish"}
           </Button>
         ) : null}
       </CardContent>
 
       <LinkedInPublishDialog
         open={dialogOpen}
-        onOpenChange={setDialogOpen}
+        onOpenChange={(open) => setDialogIdentity(open ? executionIdentity : null)}
         connectedProfileName={connection?.displayName ?? "LinkedIn member"}
         documentTitle={DOCUMENT_TITLE}
         publishing={publishing}
@@ -172,45 +246,102 @@ export function LinkedInPublisherPanel({
 function actionFor({
   connection,
   artifactReady,
-  runId,
-  revision,
+  hasExecutionIdentity,
   publishing,
   postUrl,
-  failure,
+  recovery,
 }: {
   connection: LinkedInConnection | null
   artifactReady: boolean
-  runId: string | null
-  revision: number | null
+  hasExecutionIdentity: boolean
   publishing: boolean
   postUrl?: string
-  failure?: LinkedInPublisherApiError
+  recovery: RecoveryPolicy
 }) {
-  if (publishing || postUrl || failure?.code === "UNKNOWN_OUTCOME" || connection === null) return null
+  if (publishing || postUrl || connection === null) return null
+  if (recovery.action === "retry") return "retry"
+  if (recovery.action === "rateRetry") return "rateRetry"
+  if (recovery.blocksPublish) return null
   if (!connection.connected) return connection.reconnectRequired ? "reconnect" : "connect"
-  if (!artifactReady || !runId || !revision) return null
+  if (!artifactReady || !hasExecutionIdentity) return null
   return "publish"
 }
 
 function publisherState({
   connection,
   artifactReady,
+  hasExecutionIdentity,
   publishing,
   postUrl,
   failure,
 }: {
   connection: LinkedInConnection | null
   artifactReady: boolean
+  hasExecutionIdentity: boolean
   publishing: boolean
   postUrl?: string
   failure?: LinkedInPublisherApiError
 }): LinkedInPublisherState {
   if (publishing) return "preparing_pdf"
   if (postUrl) return "published"
+  if (failure?.code === "STALE_REVISION" || failure?.code === "INVALID_ARTIFACT") return "locked"
   if (failure) return "failed"
   if (!connection?.connected) return "disconnected"
-  if (!artifactReady) return "locked"
+  if (!artifactReady || !hasExecutionIdentity) return "locked"
   return "ready"
+}
+
+interface RecoveryPolicy {
+  action?: "retry" | "rateRetry"
+  blocksPublish: boolean
+  message?: string
+}
+
+function recoveryFor(failure?: LinkedInPublisherApiError): RecoveryPolicy {
+  if (!failure) return { blocksPublish: false }
+  if (failure.code === "AUTH_REQUIRED" || failure.code === "INSUFFICIENT_SCOPE") {
+    return { blocksPublish: false }
+  }
+  if (failure.code === "STALE_REVISION") {
+    return {
+      blocksPublish: true,
+      message: "This carousel revision is stale. Rerun and approve the current revision before publishing.",
+    }
+  }
+  if (failure.code === "INVALID_ARTIFACT") {
+    return {
+      blocksPublish: true,
+      message: "This carousel artifact is no longer publishable. Rerun and approve a real artifact before publishing.",
+    }
+  }
+  if (failure.code === "DUPLICATE_PUBLISH") {
+    return {
+      blocksPublish: true,
+      message: "A post attempt already exists. Refresh or check LinkedIn before publishing again.",
+    }
+  }
+  if (failure.code === "UNKNOWN_OUTCOME") return { blocksPublish: true }
+  if (failure.code === "RATE_LIMITED") {
+    return {
+      action: "rateRetry",
+      blocksPublish: false,
+      message: failure.retryAfterSeconds
+        ? `LinkedIn asked you to retry in ${failure.retryAfterSeconds} seconds.`
+        : "LinkedIn asked you to retry later.",
+    }
+  }
+  if (failure.code === "CONFIGURATION_ERROR") {
+    return {
+      blocksPublish: true,
+      message: "LinkedIn publishing is not configured. Contact an operator to configure it.",
+    }
+  }
+  return { action: "retry", blocksPublish: false }
+}
+
+function identityFor(runId: string | null, revision: number | null): string | null {
+  if (runId === null || revision === null) return null
+  return `${runId}\u0000${revision}`
 }
 
 async function publishWithOneTransportRetry(request: PublishCarouselRequest) {

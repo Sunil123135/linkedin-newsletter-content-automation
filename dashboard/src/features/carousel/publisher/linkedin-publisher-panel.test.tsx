@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
@@ -16,6 +16,8 @@ const browserLocation = window.location
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
+  vi.clearAllMocks()
+  vi.useRealTimers()
   Object.defineProperty(window, "location", {
     configurable: true,
     value: browserLocation,
@@ -49,6 +51,28 @@ describe("LinkedInPublisherPanel", () => {
     expect(screen.queryByRole("button", { name: "Publish to LinkedIn" })).not.toBeInTheDocument()
   })
 
+  it("locks an artifact without a run identity", async () => {
+    stubFetch(connectionResponse(connectedConnection))
+    const onStateChange = vi.fn()
+
+    render(<LinkedInPublisherPanel {...panelProps} runId={null} onStateChange={onStateChange} />)
+
+    expect(await screen.findByText("Publishing is locked until an approved run and revision are available.")).toBeVisible()
+    expect(screen.queryByRole("button", { name: "Publish to LinkedIn" })).not.toBeInTheDocument()
+    await waitFor(() => expect(onStateChange).toHaveBeenLastCalledWith("locked"))
+  })
+
+  it("locks an artifact without a revision identity", async () => {
+    stubFetch(connectionResponse(connectedConnection))
+    const onStateChange = vi.fn()
+
+    render(<LinkedInPublisherPanel {...panelProps} revision={null} onStateChange={onStateChange} />)
+
+    expect(await screen.findByText("Publishing is locked until an approved run and revision are available.")).toBeVisible()
+    expect(screen.queryByRole("button", { name: "Publish to LinkedIn" })).not.toBeInTheDocument()
+    await waitFor(() => expect(onStateChange).toHaveBeenLastCalledWith("locked"))
+  })
+
   it("enables Publish only when connected and artifactReady is true", async () => {
     stubFetch(connectionResponse(connectedConnection))
 
@@ -79,7 +103,10 @@ describe("LinkedInPublisherPanel", () => {
     const user = userEvent.setup()
 
     render(<LinkedInPublisherPanel {...panelProps} />)
-    await user.click(await screen.findByRole("button", { name: "Publish to LinkedIn" }))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    await user.click(screen.getByRole("button", { name: "Publish to LinkedIn" }))
     await user.click(screen.getByRole("button", { name: "Publish document" }))
 
     expect(screen.getByRole("button", { name: "Publishing document" })).toBeDisabled()
@@ -104,7 +131,10 @@ describe("LinkedInPublisherPanel", () => {
     const user = userEvent.setup()
 
     render(<LinkedInPublisherPanel {...panelProps} />)
-    await user.click(await screen.findByRole("button", { name: "Publish to LinkedIn" }))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    await user.click(screen.getByRole("button", { name: "Publish to LinkedIn" }))
     await user.click(screen.getByRole("button", { name: "Publish document" }))
 
     expect(await screen.findByRole("link", { name: "View LinkedIn post" })).toHaveAttribute(
@@ -112,6 +142,26 @@ describe("LinkedInPublisherPanel", () => {
       "https://www.linkedin.com/feed/update/urn:li:share:post-789",
     )
     await waitFor(() => expect(panelProps.onStateChange).toHaveBeenLastCalledWith("published"))
+  })
+
+  it("keeps a result for its execution identity and clears it for a new run", async () => {
+    stubFetch(
+      connectionResponse(connectedConnection),
+      Response.json(publishResult),
+    )
+    const user = userEvent.setup()
+    const view = render(<LinkedInPublisherPanel {...panelProps} />)
+
+    await user.click(await screen.findByRole("button", { name: "Publish to LinkedIn" }))
+    await user.click(screen.getByRole("button", { name: "Publish document" }))
+    await screen.findByRole("link", { name: "View LinkedIn post" })
+
+    view.rerender(<LinkedInPublisherPanel {...panelProps} />)
+    expect(screen.getByRole("link", { name: "View LinkedIn post" })).toBeVisible()
+
+    view.rerender(<LinkedInPublisherPanel {...panelProps} runId="run-456" revision={4} />)
+    await screen.findByRole("button", { name: "Publish to LinkedIn" })
+    expect(screen.queryByRole("link", { name: "View LinkedIn post" })).not.toBeInTheDocument()
   })
 
   it("reuses the final-confirmation idempotency key for one safe transport retry", async () => {
@@ -155,6 +205,126 @@ describe("LinkedInPublisherPanel", () => {
     expect(screen.queryByRole("button", { name: "Publish to LinkedIn" })).not.toBeInTheDocument()
   })
 
+  it("clears UNKNOWN_OUTCOME recovery when the execution identity changes", async () => {
+    stubFetch(
+      connectionResponse(connectedConnection),
+      errorResponse("UNKNOWN_OUTCOME", 409, "The post may have been created."),
+    )
+    const user = userEvent.setup()
+    const view = render(<LinkedInPublisherPanel {...panelProps} />)
+
+    await user.click(await screen.findByRole("button", { name: "Publish to LinkedIn" }))
+    await user.click(screen.getByRole("button", { name: "Publish document" }))
+    await screen.findByText("We could not confirm whether LinkedIn created the post. Check LinkedIn before trying again.")
+
+    view.rerender(<LinkedInPublisherPanel {...panelProps} runId="run-456" revision={4} />)
+
+    expect(await screen.findByRole("button", { name: "Publish to LinkedIn" })).toBeEnabled()
+    expect(screen.queryByText("We could not confirm whether LinkedIn created the post. Check LinkedIn before trying again."))
+      .not.toBeInTheDocument()
+  })
+
+  it("does not apply a completed old request to a new execution identity", async () => {
+    const publish = deferredResponse()
+    stubFetch(connectionResponse(connectedConnection), publish.promise)
+    const user = userEvent.setup()
+    const view = render(<LinkedInPublisherPanel {...panelProps} />)
+
+    await user.click(await screen.findByRole("button", { name: "Publish to LinkedIn" }))
+    await user.click(screen.getByRole("button", { name: "Publish document" }))
+    view.rerender(<LinkedInPublisherPanel {...panelProps} runId="run-456" revision={4} />)
+    await screen.findByRole("button", { name: "Publish to LinkedIn" })
+
+    publish.resolve(Response.json(publishResult))
+
+    await waitFor(() => expect(screen.queryByRole("link", { name: "View LinkedIn post" })).not.toBeInTheDocument())
+    expect(screen.getByRole("button", { name: "Publish to LinkedIn" })).toBeEnabled()
+  })
+
+  it.each([
+    ["STALE_REVISION", "This carousel revision is stale. Rerun and approve the current revision before publishing."],
+    ["INVALID_ARTIFACT", "This carousel artifact is no longer publishable. Rerun and approve a real artifact before publishing."],
+  ] as const)("locks publishing for %s", async (code, message) => {
+    stubFetch(connectionResponse(connectedConnection), errorResponse(code, code === "STALE_REVISION" ? 409 : 422, message))
+    const user = userEvent.setup()
+
+    render(<LinkedInPublisherPanel {...panelProps} />)
+    await user.click(await screen.findByRole("button", { name: "Publish to LinkedIn" }))
+    await user.click(screen.getByRole("button", { name: "Publish document" }))
+
+    expect(await screen.findByText(message)).toBeVisible()
+    expect(screen.queryByRole("button", { name: "Publish to LinkedIn" })).not.toBeInTheDocument()
+  })
+
+  it("blocks duplicate publishing and directs the user to check the existing attempt", async () => {
+    stubFetch(
+      connectionResponse(connectedConnection),
+      errorResponse("DUPLICATE_PUBLISH", 409, "A post attempt already exists. Refresh or check LinkedIn before publishing again."),
+    )
+    const user = userEvent.setup()
+
+    render(<LinkedInPublisherPanel {...panelProps} />)
+    await user.click(await screen.findByRole("button", { name: "Publish to LinkedIn" }))
+    await user.click(screen.getByRole("button", { name: "Publish document" }))
+
+    expect(await screen.findByText("A post attempt already exists. Refresh or check LinkedIn before publishing again.")).toBeVisible()
+    expect(screen.queryByRole("button", { name: "Publish to LinkedIn" })).not.toBeInTheDocument()
+  })
+
+  it("holds a rate-limited publish until the server-provided delay expires", async () => {
+    vi.useFakeTimers()
+    stubFetch(
+      connectionResponse(connectedConnection),
+      errorResponse("RATE_LIMITED", 429, "Try again later.", 60),
+    )
+    render(<LinkedInPublisherPanel {...panelProps} />)
+    await act(async () => {
+      await Promise.resolve()
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Publish to LinkedIn" }))
+    fireEvent.click(screen.getByRole("button", { name: "Publish document" }))
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText("LinkedIn asked you to retry in 60 seconds.")).toBeVisible()
+    expect(screen.getByRole("button", { name: "Retry Publish in 60s" })).toBeDisabled()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000)
+    })
+    expect(screen.getByRole("button", { name: "Retry Publish" })).toBeEnabled()
+  })
+
+  it("routes retry-safe provider failures back through the confirmation dialog", async () => {
+    stubFetch(
+      connectionResponse(connectedConnection),
+      errorResponse("LINKEDIN_UNAVAILABLE", 503, "LinkedIn is temporarily unavailable."),
+    )
+    const user = userEvent.setup()
+
+    render(<LinkedInPublisherPanel {...panelProps} />)
+    await user.click(await screen.findByRole("button", { name: "Publish to LinkedIn" }))
+    await user.click(screen.getByRole("button", { name: "Publish document" }))
+    await user.click(await screen.findByRole("button", { name: "Retry Publish" }))
+
+    expect(screen.getByRole("dialog", { name: "Publish carousel to LinkedIn" })).toBeVisible()
+  })
+
+  it("blocks publishing for an operator configuration error", async () => {
+    stubFetch(
+      connectionResponse(connectedConnection),
+      errorResponse("CONFIGURATION_ERROR", 503, "LinkedIn publishing is not configured. Contact an operator to configure it."),
+    )
+    const user = userEvent.setup()
+
+    render(<LinkedInPublisherPanel {...panelProps} />)
+    await user.click(await screen.findByRole("button", { name: "Publish to LinkedIn" }))
+    await user.click(screen.getByRole("button", { name: "Publish document" }))
+
+    expect(await screen.findByText("LinkedIn publishing is not configured. Contact an operator to configure it.")).toBeVisible()
+    expect(screen.queryByRole("button", { name: "Publish to LinkedIn" })).not.toBeInTheDocument()
+  })
+
   it("returns to reconnect when LinkedIn rejects the credential", async () => {
     stubFetch(
       connectionResponse(connectedConnection),
@@ -194,8 +364,25 @@ const connectedConnection = {
   reconnectRequired: false,
 }
 
+const publishResult = {
+  postUrn: "urn:li:share:post-789",
+  postUrl: "https://www.linkedin.com/feed/update/urn:li:share:post-789",
+  publishedAt: "2026-08-03T10:00:01.000Z",
+}
+
 function connectionResponse(connection: object): Response {
   return Response.json(connection)
+}
+
+function errorResponse(
+  code: string,
+  status: number,
+  message: string,
+  retryAfterSeconds?: number,
+): Response {
+  return Response.json({
+    error: { code, message, ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }) },
+  }, { status })
 }
 
 function stubFetch(...responses: Array<Response | Promise<Response> | Error>) {
