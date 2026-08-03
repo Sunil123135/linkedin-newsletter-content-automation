@@ -16,7 +16,7 @@ const progressByStatus: Record<ExecutionStatus, number> = {
 const productionItems = [
   { label: "Visual direction", value: "Editorial systems", icon: SparklesIcon },
   { label: "Format", value: "1080 × 1080", icon: FrameIcon },
-  { label: "Slide set", value: "8 images", icon: ImagesIcon },
+  { label: "Slide set", value: "5 images", icon: ImagesIcon },
   { label: "Consistency", value: "Type · palette · art direction", icon: PaletteIcon },
 ]
 

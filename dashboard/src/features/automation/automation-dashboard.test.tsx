@@ -41,6 +41,7 @@ describe("AutomationDashboard", () => {
     renderDashboard("carousel")
     expect(screen.getByRole("button", { name: "Run Workflow" })).toBeVisible()
     expect(screen.getByRole("heading", { name: "Visual Production" })).toBeVisible()
+    expect(screen.getByText("5 images")).toBeVisible()
     expect(screen.getByRole("heading", { name: "Carousel Output" })).toBeVisible()
     expect(screen.queryByText(/front-end prototype/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/pipeline health|command center/i)).not.toBeInTheDocument()

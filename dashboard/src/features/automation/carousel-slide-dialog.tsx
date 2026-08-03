@@ -39,7 +39,7 @@ export function CarouselSlideArtwork({
           {slide.eyebrow}
         </span>
         <span className="font-mono text-[clamp(0.55rem,1.5vw,0.78rem)] font-medium text-muted-foreground">
-          {String(slide.index).padStart(2, "0")} / 08
+          {String(slide.index).padStart(2, "0")} / 05
         </span>
       </div>
 

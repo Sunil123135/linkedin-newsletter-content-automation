@@ -10,6 +10,8 @@ it("opens every generated slide individually", async () => {
   render(<CarouselOutputGallery slides={CAROUSEL_SLIDES} />)
 
   expect(screen.getAllByRole("button", { name: /Review slide/i })).toHaveLength(5)
+  expect(screen.getByText("01 / 05")).toBeVisible()
+  expect(screen.queryByText("01 / 08")).not.toBeInTheDocument()
 
   for (const slide of CAROUSEL_SLIDES) {
     await user.click(screen.getByRole("button", { name: `Review slide ${slide.index}` }))
