@@ -51,6 +51,41 @@ describe("LinkedInPublisherPanel", () => {
     expect(screen.queryByRole("button", { name: "Publish to LinkedIn" })).not.toBeInTheDocument()
   })
 
+  it("reports a safe connected presentation after preflight", async () => {
+    const onConnectionPresentationChange = vi.fn()
+    stubFetch(connectionResponse(connectedConnection))
+
+    render(
+      <LinkedInPublisherPanel
+        {...panelProps}
+        onConnectionPresentationChange={onConnectionPresentationChange}
+      />
+    )
+
+    await waitFor(() => expect(onConnectionPresentationChange).toHaveBeenLastCalledWith({
+      connected: true,
+      displayName: "Ada Lovelace",
+    }))
+  })
+
+  it("keeps fixture publishing locked before offering a connection action", async () => {
+    stubFetch(connectionResponse({ connected: false, reconnectRequired: false }))
+
+    render(<LinkedInPublisherPanel {...panelProps} artifactReady={false} />)
+
+    expect(await screen.findByText("Publishing is locked until an approved carousel artifact is available.")).toBeVisible()
+    expect(screen.queryByRole("button", { name: /Connect LinkedIn|Reconnect LinkedIn|Publish to LinkedIn/ })).not.toBeInTheDocument()
+  })
+
+  it("keeps a disconnected Publisher locked when the approved run identity is missing", async () => {
+    stubFetch(connectionResponse({ connected: false, reconnectRequired: false }))
+
+    render(<LinkedInPublisherPanel {...panelProps} runId={null} />)
+
+    expect(await screen.findByText("Publishing is locked until an approved run and revision are available.")).toBeVisible()
+    expect(screen.queryByRole("button", { name: /Connect LinkedIn|Reconnect LinkedIn|Publish to LinkedIn/ })).not.toBeInTheDocument()
+  })
+
   it("locks an artifact without a run identity", async () => {
     stubFetch(connectionResponse(connectedConnection))
     const onStateChange = vi.fn()

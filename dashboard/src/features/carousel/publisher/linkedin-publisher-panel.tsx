@@ -21,6 +21,12 @@ export interface LinkedInPublisherPanelProps {
   revision: number | null
   artifactReady: boolean
   onStateChange(state: LinkedInPublisherState): void
+  onConnectionPresentationChange?(presentation: LinkedInConnectionPresentation): void
+}
+
+export interface LinkedInConnectionPresentation {
+  connected: boolean
+  displayName?: string
 }
 
 const DOCUMENT_TITLE = "Approved carousel document"
@@ -30,6 +36,7 @@ export function LinkedInPublisherPanel({
   revision,
   artifactReady,
   onStateChange,
+  onConnectionPresentationChange,
 }: LinkedInPublisherPanelProps) {
   const executionIdentity = identityFor(runId, revision)
   const [connection, setConnection] = useState<LinkedInConnection | null>(null)
@@ -100,6 +107,10 @@ export function LinkedInPublisherPanel({
   useEffect(() => {
     onStateChange(state)
   }, [onStateChange, state])
+
+  useEffect(() => {
+    onConnectionPresentationChange?.(connectionPresentationFor(connection))
+  }, [connection, onConnectionPresentationChange])
 
   function startOAuth() {
     window.location.assign("/api/linkedin/oauth/start")
@@ -260,12 +271,22 @@ function actionFor({
   recovery: RecoveryPolicy
 }) {
   if (publishing || postUrl || connection === null) return null
+  if (!artifactReady || !hasExecutionIdentity) return null
   if (recovery.action === "retry") return "retry"
   if (recovery.action === "rateRetry") return "rateRetry"
   if (recovery.blocksPublish) return null
   if (!connection.connected) return connection.reconnectRequired ? "reconnect" : "connect"
-  if (!artifactReady || !hasExecutionIdentity) return null
   return "publish"
+}
+
+function connectionPresentationFor(
+  connection: LinkedInConnection | null,
+): LinkedInConnectionPresentation {
+  if (!connection?.connected) return { connected: false }
+  return {
+    connected: true,
+    ...(connection.displayName ? { displayName: connection.displayName } : {}),
+  }
 }
 
 function publisherState({

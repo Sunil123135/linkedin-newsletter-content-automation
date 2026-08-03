@@ -35,11 +35,13 @@ export function WorkflowNode({
   node,
   status,
   selected,
+  ariaControls,
   onSelect,
 }: {
   node: WorkflowNodeDefinition
   status: ExecutionStatus
   selected: boolean
+  ariaControls?: string
   onSelect: () => void
 }) {
   const Icon = icons[node.icon]
@@ -49,6 +51,7 @@ export function WorkflowNode({
       type="button"
       aria-label={`${node.label} node`}
       aria-pressed={selected}
+      aria-controls={ariaControls}
       data-execution-mode={node.executionMode}
       onClick={onSelect}
       className={cn(

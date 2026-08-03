@@ -17,12 +17,14 @@ export function WorkflowCanvas({
   statuses,
   activeConnectionId,
   selectedNodeId,
+  selectedNodeDetailsId,
   onSelectNode,
 }: {
   workflow: WorkflowDefinition
   statuses: Record<NodeId, ExecutionStatus>
   activeConnectionId: string | null
   selectedNodeId: NodeId
+  selectedNodeDetailsId?: string
   onSelectNode: (id: NodeId) => void
 }) {
   const [zoom, setZoom] = useState(1)
@@ -101,6 +103,7 @@ export function WorkflowCanvas({
               node={node}
               status={statuses[node.id]}
               selected={selectedNodeId === node.id}
+              ariaControls={selectedNodeId === node.id ? selectedNodeDetailsId : undefined}
               onSelect={() => onSelectNode(node.id)}
             />
           ))}

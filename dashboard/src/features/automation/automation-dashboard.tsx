@@ -6,7 +6,10 @@ import { SiteHeader } from "@/components/site-header"
 import { Card, CardContent } from "@/components/ui/card"
 
 import { LinkedInPublisherNode } from "../carousel/publisher/linkedin-publisher-node"
-import { LinkedInPublisherPanel } from "../carousel/publisher/linkedin-publisher-panel"
+import {
+  LinkedInPublisherPanel,
+  type LinkedInConnectionPresentation,
+} from "../carousel/publisher/linkedin-publisher-panel"
 import {
   toCanvasExecutionStatus,
   type LinkedInPublisherState,
@@ -27,12 +30,16 @@ import {
   NEWSLETTER_WORKFLOW,
 } from "./workflow-fixtures"
 
+const PUBLISHER_DETAILS_ID = "linkedin-publisher-details"
+
 function AutomationWorkspace({ workflow }: { workflow: WorkflowKind }) {
   const workflowDefinition =
     workflow === "newsletter" ? NEWSLETTER_WORKFLOW : CAROUSEL_WORKFLOW
   const [selectedNodeId, setSelectedNodeId] = useState<NodeId>("source")
   const [publisherState, setPublisherState] =
     useState<LinkedInPublisherState>("disconnected")
+  const [publisherConnection, setPublisherConnection] =
+    useState<LinkedInConnectionPresentation>({ connected: false })
   const simulation = useWorkflowSimulation(
     workflowDefinition.nodes,
     workflowDefinition.connections
@@ -64,14 +71,29 @@ function AutomationWorkspace({ workflow }: { workflow: WorkflowKind }) {
             statuses={statuses}
             activeConnectionId={simulation.activeConnectionId}
             selectedNodeId={selectedNodeId}
+            selectedNodeDetailsId={
+              workflow === "carousel" && selectedNodeId === "publisher"
+                ? PUBLISHER_DETAILS_ID
+                : undefined
+            }
             onSelectNode={setSelectedNodeId}
           />
           {workflow === "carousel" && selectedNodeId === "publisher" ? (
-            <div className="space-y-4">
+            <div
+              id={PUBLISHER_DETAILS_ID}
+              role="region"
+              aria-label="LinkedIn Publisher details"
+              className="space-y-4"
+            >
               <Card>
                 <CardContent className="pt-5">
                   <LinkedInPublisherNode
                     state={publisherState}
+                    connectionName={
+                      publisherConnection.connected
+                        ? publisherConnection.displayName
+                        : undefined
+                    }
                     approvedRevision={publisherArtifact.revision ?? undefined}
                   />
                 </CardContent>
@@ -81,6 +103,7 @@ function AutomationWorkspace({ workflow }: { workflow: WorkflowKind }) {
                 revision={publisherArtifact.revision}
                 artifactReady={approvedArtifact !== null}
                 onStateChange={setPublisherState}
+                onConnectionPresentationChange={setPublisherConnection}
               />
             </div>
           ) : (

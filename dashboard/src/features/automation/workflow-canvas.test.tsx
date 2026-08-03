@@ -47,3 +47,22 @@ it.each([
 
   expect(screen.getByText(summary)).toBeVisible()
 })
+
+it("forwards an optional details relationship only to the selected node", () => {
+  render(
+    <WorkflowCanvas
+      workflow={CAROUSEL_WORKFLOW}
+      statuses={idleStatuses}
+      activeConnectionId={null}
+      selectedNodeId="publisher"
+      selectedNodeDetailsId="publisher-details"
+      onSelectNode={vi.fn()}
+    />
+  )
+
+  expect(screen.getByRole("button", { name: "LinkedIn Publisher node" })).toHaveAttribute(
+    "aria-controls",
+    "publisher-details"
+  )
+  expect(screen.getByRole("button", { name: "Find Current News node" })).not.toHaveAttribute("aria-controls")
+})
