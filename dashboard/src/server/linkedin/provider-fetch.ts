@@ -22,10 +22,16 @@ export async function fetchLinkedInProvider(
   }, timeoutMs)
 
   try {
-    return await fetchImplementation(input, {
+    const response = await fetchImplementation(input, {
       ...init,
       redirect: "manual",
       signal: controller.signal,
+    })
+    const body = await response.arrayBuffer()
+    return new Response(body.byteLength === 0 ? null : body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
     })
   } finally {
     clearTimeout(timeout)
