@@ -9,7 +9,7 @@ pnpm install
 pnpm dev
 ```
 
-Open [http://localhost:3000/dashboard?workflow=carousel](http://localhost:3000/dashboard?workflow=carousel) to see the carousel workspace. For the documented local OAuth callback on port 3100, run `pnpm dev -- --port 3100` instead.
+Open [http://localhost:3000/dashboard?workflow=carousel](http://localhost:3000/dashboard?workflow=carousel) to see the carousel workspace. For the documented local OAuth callback on port 3100, run `pnpm exec next dev --webpack --port 3100` instead.
 
 ## LinkedIn Publisher
 
