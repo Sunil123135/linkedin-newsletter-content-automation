@@ -1,9 +1,19 @@
 import { fireEvent, render, screen, within } from "@testing-library/react"
 import { describe, expect, it } from "vitest"
 
+import { SidebarProvider } from "@/components/ui/sidebar"
+
 import { PipelineBoard } from "./pipeline-board"
 import { pipelineItems } from "./pipeline-data"
 import { PipelineWorkspace } from "./pipeline-workspace"
+
+function renderWorkspace() {
+  return render(
+    <SidebarProvider>
+      <PipelineWorkspace />
+    </SidebarProvider>
+  )
+}
 
 describe("PipelineBoard", () => {
   it("renders every lifecycle stage and its matching items", () => {
@@ -32,7 +42,7 @@ describe("PipelineBoard", () => {
 
 describe("PipelineWorkspace", () => {
   it("filters the board by output type", () => {
-    render(<PipelineWorkspace />)
+    renderWorkspace()
 
     fireEvent.click(screen.getByRole("button", { name: "Newsletters" }))
 

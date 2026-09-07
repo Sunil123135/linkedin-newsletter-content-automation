@@ -1207,7 +1207,7 @@ Expected: the publish call exists only in `linkedin-publisher-client.ts` and the
 Run:
 
 ```powershell
-pnpm dev -- --port 3100
+pnpm exec next dev --webpack --port 3100
 ```
 
 At `http://localhost:3100/dashboard?workflow=carousel`, verify:
