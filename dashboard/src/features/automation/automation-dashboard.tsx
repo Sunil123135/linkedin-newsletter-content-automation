@@ -4,6 +4,7 @@ import { useState } from "react"
 
 import { SiteHeader } from "@/components/site-header"
 import { Card, CardContent } from "@/components/ui/card"
+import { NewsletterWorkspace } from "@/features/newsletter/newsletter-workspace"
 
 import { LinkedInPublisherNode } from "../carousel/publisher/linkedin-publisher-node"
 import {
@@ -17,24 +18,17 @@ import {
 
 import { CarouselOutputGallery } from "./carousel-output-gallery"
 import { CarouselVisualProduction } from "./carousel-visual-production"
-import { NewsletterOutputPreview } from "./newsletter-output-preview"
-import { NewsletterProduction } from "./newsletter-production"
 import { NodeInspector } from "./node-inspector"
 import type { NodeId, WorkflowKind } from "./types"
 import { useWorkflowSimulation } from "./use-workflow-simulation"
 import { WorkflowCanvas } from "./workflow-canvas"
-import {
-  CAROUSEL_SLIDES,
-  CAROUSEL_WORKFLOW,
-  NEWSLETTER_ARTICLE,
-  NEWSLETTER_WORKFLOW,
-} from "./workflow-fixtures"
+import { CAROUSEL_SLIDES, CAROUSEL_WORKFLOW } from "./workflow-fixtures"
 
 const PUBLISHER_DETAILS_ID = "linkedin-publisher-details"
 
-function AutomationWorkspace({ workflow }: { workflow: WorkflowKind }) {
-  const workflowDefinition =
-    workflow === "newsletter" ? NEWSLETTER_WORKFLOW : CAROUSEL_WORKFLOW
+function AutomationWorkspace() {
+  const workflow: WorkflowKind = "carousel"
+  const workflowDefinition = CAROUSEL_WORKFLOW
   const [selectedNodeId, setSelectedNodeId] = useState<NodeId>("source")
   const [publisherState, setPublisherState] =
     useState<LinkedInPublisherState>("disconnected")
@@ -112,21 +106,8 @@ function AutomationWorkspace({ workflow }: { workflow: WorkflowKind }) {
           )}
         </div>
 
-        {workflow === "carousel" ? (
-          <>
-            <CarouselVisualProduction status={simulation.statuses.visual} />
-            <CarouselOutputGallery slides={CAROUSEL_SLIDES} />
-          </>
-        ) : (
-          <>
-            <NewsletterProduction
-              article={NEWSLETTER_ARTICLE}
-              visualStatus={simulation.statuses.visual}
-              writerStatus={simulation.statuses.writer}
-            />
-            <NewsletterOutputPreview article={NEWSLETTER_ARTICLE} />
-          </>
-        )}
+        <CarouselVisualProduction status={simulation.statuses.visual} />
+        <CarouselOutputGallery slides={CAROUSEL_SLIDES} />
       </main>
     </>
   )
@@ -140,5 +121,9 @@ function artifactProps(artifact: null | { runId: string; revision: number }) {
 }
 
 export function AutomationDashboard({ workflow }: { workflow: WorkflowKind }) {
-  return <AutomationWorkspace key={workflow} workflow={workflow} />
+  return workflow === "newsletter" ? (
+    <NewsletterWorkspace />
+  ) : (
+    <AutomationWorkspace />
+  )
 }
