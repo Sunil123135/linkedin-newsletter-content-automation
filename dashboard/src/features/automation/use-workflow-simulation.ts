@@ -17,6 +17,7 @@ const IDLE_STATUSES: Record<NodeId, ExecutionStatus> = {
   writer: "idle",
   visual: "idle",
   review: "idle",
+  publish: "idle",
   publisher: "idle",
 }
 

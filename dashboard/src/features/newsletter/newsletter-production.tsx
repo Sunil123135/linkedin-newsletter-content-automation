@@ -10,7 +10,9 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
 
-import type { ExecutionStatus, NewsletterArticle } from "./types"
+import type { ExecutionStatus } from "@/features/automation/types"
+
+import type { NewsletterArticle } from "./types"
 
 export function NewsletterLeadVisual({ className = "" }: { className?: string }) {
   return (

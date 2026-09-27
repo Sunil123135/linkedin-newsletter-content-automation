@@ -1,6 +1,5 @@
 import type {
   CarouselSlide,
-  NewsletterArticle,
   NodeId,
   WorkflowConnection,
   WorkflowDefinition,
@@ -15,7 +14,6 @@ const CAROUSEL_ORDERED_IDS: NodeId[] = [
   "review",
   "publisher",
 ]
-const NEWSLETTER_ORDERED_IDS: NodeId[] = ["source", "research", "writer", "visual", "review"]
 const POSITIONS = [
   { x: 4, y: 10 },
   { x: 27, y: 10 },
@@ -80,19 +78,6 @@ export const CAROUSEL_WORKFLOW: WorkflowDefinition = {
   connections: connections(CAROUSEL_ORDERED_IDS),
 }
 
-export const NEWSLETTER_WORKFLOW: WorkflowDefinition = {
-  kind: "newsletter",
-  title: "Newsletter",
-  nodes: nodes([
-    { label: "Collect Sources", provider: "Firecrawl", description: "Collects primary reporting and technical references.", input: "Editorial topic and sources", output: "Source library", result: "18 sources collected", icon: "search" },
-    { label: "Build Editorial Brief", provider: "OpenAI", description: "Creates a structured argument from the research.", input: "Source library", output: "Editorial brief", result: "Brief approved", icon: "brain" },
-    { label: "Write Newsletter", provider: "OpenAI", description: "Drafts the long-form issue with citations.", input: "Editorial brief", output: "Newsletter draft", result: "1,420 words drafted", icon: "write" },
-    { label: "Create Lead Visual", provider: "OpenAI Image · Nano Banana", description: "Creates a lead visual aligned to the editorial theme.", input: "Newsletter draft and art direction", output: "Lead visual", result: "Lead visual generated", icon: "image" },
-    { label: "Review Newsletter", provider: "Dashboard", description: "Combines the article and visual in a review workspace.", input: "Draft and lead visual", output: "Review-ready issue", result: "Ready for review", icon: "review" },
-  ], NEWSLETTER_ORDERED_IDS),
-  connections: connections(NEWSLETTER_ORDERED_IDS),
-}
-
 export const CAROUSEL_SLIDES: CarouselSlide[] = [
   { id: "slide-1", index: 1, eyebrow: "AI AGENT SYSTEMS", title: "A polished demo is not a dependable agent", body: "Reliability begins after the happy path ends.", footer: "The systems behind dependable AI agents" },
   { id: "slide-2", index: 2, eyebrow: "01 · DEMOS", title: "Agent demos hide the operating system", body: "One successful run tells you very little about the workflow around it.", footer: "Design the loop, not just the prompt" },
@@ -100,17 +85,3 @@ export const CAROUSEL_SLIDES: CarouselSlide[] = [
   { id: "slide-4", index: 4, eyebrow: "03 · VALIDATION", title: "Validate every irreversible step", body: "Check structured output, sources, and intent before an agent acts downstream.", footer: "Trust is built at boundaries" },
   { id: "slide-5", index: 5, eyebrow: "04 · OBSERVABILITY", title: "If you cannot see it, you cannot improve it", body: "Trace decisions, tool calls, latency, and cost across the complete run.", footer: "Make the invisible legible" },
 ]
-
-export const NEWSLETTER_ARTICLE: NewsletterArticle = {
-  title: "The systems behind dependable AI agents",
-  deck: "Why the workflow around a model—not the model alone—determines whether an agent can earn trust in production.",
-  readingTime: "7 min read",
-  wordCount: 1420,
-  citationCount: 9,
-  sections: [
-    { heading: "The demo-to-production gap", body: "A compelling agent demo proves that a model can complete a path once. Production asks a harder question: can the whole system recover, explain itself, and preserve useful state when that path breaks?" },
-    { heading: "Reliability lives at the boundaries", body: "Source quality, typed handoffs, validation, and explicit checkpoints matter because each tool boundary introduces uncertainty. The best workflows make those transitions visible and testable." },
-    { heading: "Human judgment is part of the architecture", body: "High-stakes review should not be bolted on after generation. It should be a first-class node with the evidence, outputs, and context a reviewer needs to make a fast, informed decision." },
-    { heading: "Design the operating loop", body: "Teams that treat orchestration, observability, and recovery as product surfaces can improve the complete loop instead of endlessly tuning isolated prompts." },
-  ],
-}

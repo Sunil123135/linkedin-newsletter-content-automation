@@ -5,6 +5,7 @@ export type NodeId =
   | "writer"
   | "visual"
   | "review"
+  | "publish"
   | "publisher"
 export type NodeExecutionMode = "automatic" | "manual"
 export type ExecutionStatus = "idle" | "queued" | "running" | "completed" | "error"
@@ -43,13 +44,4 @@ export interface CarouselSlide {
   title: string
   body: string
   footer: string
-}
-
-export interface NewsletterArticle {
-  title: string
-  deck: string
-  readingTime: string
-  wordCount: number
-  citationCount: number
-  sections: { heading: string; body: string }[]
 }

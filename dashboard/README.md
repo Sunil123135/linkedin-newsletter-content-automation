@@ -11,6 +11,14 @@ pnpm dev
 
 Open [http://localhost:3000/dashboard?workflow=carousel](http://localhost:3000/dashboard?workflow=carousel) to see the carousel workspace. For the documented local OAuth callback on port 3100, run `pnpm exec next dev --webpack --port 3100` instead.
 
+## Newsletter publishing
+
+Newsletter publishing uses the server-only `POST /api/newsletter/publish` route.
+Configure `RESEND_API_KEY` and the single fixed `NEWSLETTER_TEST_RECIPIENT`
+in `.env.local` before using the Publish action. The client never sends or
+selects an email address. Publish appears only after editorial review, and
+automated tests replace the external transport so they never send email.
+
 ## LinkedIn Publisher
 
 The Publisher converts one approved five-slide run into a deterministic five-page PDF and sends it to the connected member's personal LinkedIn profile. `Run Workflow` stops after Review Carousel. It cannot publish; only the final confirmation inside the Publisher dialog calls the publish route, and every post is created with `PUBLIC` visibility.
